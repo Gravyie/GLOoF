@@ -40,13 +40,19 @@ class AlertDispatcher:
         s = self._s
         return {"operators": s.operator_phones, "officials": s.official_phones, "public": s.phone_list}[audience]
 
-    def _deliver(self, audience: str, message: str, live: bool) -> tuple[str, list[str], int]:
+    def _deliver(self, audience: str, message: str, live: bool, *, level: str = "", lake: Lake | None = None
+                 ) -> tuple[str, list[str], int]:
         phones = self._phones(audience)
-        topic = self._s.sns_topic_arn if audience == "public" else None
+        # One topic for every audience; subscriptions pick theirs with an SNS
+        # filter policy on the "audience" attribute (see infra/terraform).
+        topic = self._s.sns_topic_arn
         if live and (phones or topic):
             try:
-                ids = self._sns.publish_text(message, phones=phones, topic=topic)
-                return "sent", ids, len(phones) or 1
+                subject = f"[GLOF {level}] {lake.name}" if lake and level else "GLOF alert"
+                ids = self._sns.publish_text(message, phones=phones, topic=topic, subject=subject,
+                                             attributes={"audience": audience, "level": level,
+                                                         "lake": lake.id if lake else ""})
+                return "sent", ids, len(phones) + (1 if topic else 0)
             except (AlertError, Exception) as exc:  # never let delivery crash the monitor
                 log.error("delivery to %s failed: %s", audience, exc)
                 return "failed", [], len(phones)
@@ -63,26 +69,34 @@ class AlertDispatcher:
         return []
 
     def dispatch(self, lake: Lake, level: str, reasons: list[dict], *, source: str,
-                 sim_h: float | None = None, autopilot: bool = True, live: bool = False
-                 ) -> list[dict[str, Any]]:
+                 sim_h: float | None = None, autopilot: bool = True, live: bool = False,
+                 meta: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         out = []
         for audience, message in self._plan(lake, level, reasons):
             needs_approval = audience == "public" and not autopilot
             if needs_approval:
                 status, ids, n = "pending_approval", [], len(self._phones(audience)) or DEMO_RECIPIENTS[audience]
             else:
-                status, ids, n = self._deliver(audience, message, live)
+                status, ids, n = self._deliver(audience, message, live, level=level, lake=lake)
             out.append(self._log.add(
                 lake=lake.id, level=level, audience=audience, audience_label=AUDIENCE_LABEL[audience],
                 recipients=n, message=message, status=status, message_ids=ids,
-                source=source, sim_h=sim_h, channel="SMS via AWS SNS", live=live))
+                source=source, sim_h=sim_h, channel=self.channel(), live=live, **(meta or {})))
         return out
+
+    def channel(self) -> str:
+        if self._s.sns_topic_arn:
+            return f"AWS SNS topic {self._s.sns_topic_arn.rsplit(':', 1)[-1]}"
+        return "SMS via AWS SNS"
 
     def approve(self, alert_id: int, approver: str, live: bool) -> dict[str, Any] | None:
         rec = self._log.get(alert_id)
         if not rec or rec["status"] != "pending_approval":
             return None
-        status, ids, n = self._deliver(rec["audience"], rec["message"], live)
+        from src.core.config import LAKES
+
+        status, ids, n = self._deliver(rec["audience"], rec["message"], live, level=rec["level"],
+                                       lake=LAKES.get(rec["lake"]))
         return self._log.update(alert_id, status=status, message_ids=ids, recipients=n, approved_by=approver)
 
     def reject(self, alert_id: int, approver: str) -> dict[str, Any] | None:

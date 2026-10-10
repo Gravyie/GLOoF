@@ -174,3 +174,124 @@ def sim_speed(request: Request, speed: float):
 def sim_reset(request: Request):
     request.app.state.sim.reset()
     return request.app.state.sim.state()
+
+
+# --------------------------------------------------------------------------- #
+# Boundary archive (2017 -> today) + its replay
+# --------------------------------------------------------------------------- #
+def _replay_or_404(request: Request, lake: str):
+    rp = request.app.state.replays.get(_lake_or_404(lake).id)
+    if rp is None:
+        raise HTTPException(404, f"no boundary archive for '{lake}'. Build it: python -m scripts.build_archive --lake {lake}")
+    return rp
+
+
+@router.get("/archive")
+def archive(request: Request, lake: str = Query("south_lhonak")):
+    """Every archived outline + the per-frame risk timeline, in one response
+    (the view renders as one verdict, so it is never assembled from N calls)."""
+    st = request.app.state
+    lk = _lake_or_404(lake)
+    doc = st.archives.get(lk.id)
+    if not doc:
+        raise HTTPException(404, f"no boundary archive for '{lake}'. Build it: python -m scripts.build_archive --lake {lake}")
+    return {**doc, "timeline": st.timelines[lk.id], "store": st.archive_store.describe}
+
+
+@router.get("/archive/replay/state")
+def replay_state(request: Request, lake: str = Query("south_lhonak")):
+    return _replay_or_404(request, lake).state()
+
+
+@router.post("/archive/replay/start")
+def replay_start(request: Request, lake: str = Query("south_lhonak"), speed: float = 1.0, autopilot: bool = True):
+    rp = _replay_or_404(request, lake)
+    rp.start(speed, autopilot)
+    return rp.state()
+
+
+@router.post("/archive/replay/pause")
+def replay_pause(request: Request, lake: str = Query("south_lhonak")):
+    rp = _replay_or_404(request, lake)
+    rp.pause()
+    return rp.state()
+
+
+@router.post("/archive/replay/speed")
+def replay_speed(request: Request, speed: float, lake: str = Query("south_lhonak")):
+    rp = _replay_or_404(request, lake)
+    rp.set_speed(speed)
+    return rp.state()
+
+
+@router.post("/archive/replay/seek")
+def replay_seek(request: Request, lake: str = Query("south_lhonak"),
+                progress: float | None = Query(None, ge=0, le=1), date: str | None = None):
+    rp = _replay_or_404(request, lake)
+    if progress is None and date is None:
+        raise HTTPException(422, "give progress (0-1) or date (YYYY-MM-DD)")
+    try:
+        rp.seek(progress=progress, day=date)
+    except ValueError:
+        raise HTTPException(422, "date must be YYYY-MM-DD")
+    return rp.state()
+
+
+@router.post("/archive/replay/reset")
+def replay_reset(request: Request, lake: str = Query("south_lhonak")):
+    rp = _replay_or_404(request, lake)
+    rp.reset()
+    return rp.state()
+
+
+@router.post("/archive/reload")
+def archive_reload(request: Request, x_api_key: str | None = Header(default=None)):
+    """Re-read archives from the store (e.g. after the ingest Lambda appended a scene)."""
+    _require_operator(request, x_api_key)
+    from src.main import load_archives
+
+    return {"loaded": load_archives(request.app)}
+
+
+# --------------------------------------------------------------------------- #
+# System status: every integration states its real mode (no unlabeled stand-ins)
+# --------------------------------------------------------------------------- #
+@router.get("/system")
+def system(request: Request):
+    st = request.app.state
+    s = st.settings
+    if s.sns_live and s.sns_topic_arn:
+        sns = {"mode": "live", "label": f"live: SNS topic {s.sns_topic_arn.rsplit(':', 1)[-1]}", "topic": s.sns_topic_arn}
+    elif s.sns_live and (s.phone_list or s.operator_phones or s.official_phones):
+        sns = {"mode": "live", "label": "live: SNS direct SMS", "topic": None}
+    else:
+        why = "ALERT_DRY_RUN=true" if s.alert_dry_run else "SIM_LIVE_SMS=false" if not s.sim_live_sms else "no topic/recipients"
+        sns = {"mode": "simulated", "label": f"simulated delivery ({why})", "topic": s.sns_topic_arn}
+    return {
+        "sns": sns,
+        "archive": {"store": st.archive_store.describe, "lakes": {k: len(v["frames"]) for k, v in st.archives.items()}},
+        "imagery": "Sentinel-2 L2A via AWS Earth Search (AWS Open Data)",
+        "terrain": "Terrarium elevation tiles (AWS Open Data)",
+        "operator_actions": bool(s.alert_api_key),
+    }
+
+
+@router.post("/notify/test")
+def notify_test(request: Request, x_api_key: str | None = Header(default=None)):
+    """Prove the SNS path end to end: verify the topic, then publish one test
+    message to operators. Refuses (409) rather than pretending when not live."""
+    _require_operator(request, x_api_key)
+    st = request.app.state
+    if not st.settings.sns_live or not st.settings.sns_topic_arn:
+        raise HTTPException(409, "SNS is in simulated mode: set SNS_TOPIC_ARN, SIM_LIVE_SMS=true, ALERT_DRY_RUN=false")
+    try:
+        info = st.alerts.verify_topic()
+        ids = st.alerts.publish_text(
+            "[GLOF TEST] Glacial Lake Monitor: notification path check. No action needed.",
+            topic=st.settings.sns_topic_arn, subject="[GLOF TEST] notification path check",
+            attributes={"audience": "operators", "level": "TEST", "lake": "all"})
+    except AlertError as exc:
+        raise HTTPException(502, str(exc))
+    except Exception as exc:  # botocore credential errors etc.
+        raise HTTPException(502, f"SNS publish failed: {exc}")
+    return {**info, "message_ids": ids}

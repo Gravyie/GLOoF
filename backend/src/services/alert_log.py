@@ -37,6 +37,13 @@ class AlertLog:
                     if r["id"] > after_id and (lake is None or r["lake"] == lake)
                     and (source is None or r.get("source") == source)]
 
+    def discard(self, pred) -> int:
+        """Remove every record for which ``pred(record)`` is true. Returns the count."""
+        with self._lock:
+            before = len(self._items)
+            self._items = [r for r in self._items if not pred(r)]
+            return before - len(self._items)
+
     def clear(self, *, source: str | None = None) -> None:
         with self._lock:
             self._items = [r for r in self._items if source is not None and r.get("source") != source]

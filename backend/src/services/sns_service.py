@@ -102,16 +102,39 @@ class SnsAlertService:
             attrs["AWS.MM.SMS.TemplateId"] = {"DataType": "String", "StringValue": self._s.sns_template_id}
         return attrs
 
-    def publish_text(self, message: str, *, phones: list[str] | None = None, topic: str | None = None) -> list[str]:
-        """Low-level send used by the dispatcher. Returns SNS message ids."""
+    def publish_text(self, message: str, *, phones: list[str] | None = None, topic: str | None = None,
+                     subject: str | None = None, attributes: dict[str, str] | None = None) -> list[str]:
+        """Low-level send used by the dispatcher. Returns SNS message ids.
+
+        ``attributes`` become String message attributes on the topic publish, so
+        subscriptions can filter (e.g. officials only get audience=officials).
+        ``subject`` is used by email subscribers (ASCII, <= 100 chars).
+        """
         sns, attrs, ids = self._sns(), self._attributes(), []
         if topic:
-            ids.append(sns.publish(TopicArn=topic, Message=message, MessageAttributes=attrs)["MessageId"])
+            topic_attrs = dict(attrs)
+            for k, v in (attributes or {}).items():
+                if v:
+                    topic_attrs[k] = {"DataType": "String", "StringValue": v}
+            kw = {"Subject": subject.encode("ascii", "ignore").decode()[:100]} if subject else {}
+            ids.append(sns.publish(TopicArn=topic, Message=message, MessageAttributes=topic_attrs, **kw)["MessageId"])
         for phone in phones or []:
             if not E164.match(phone):
                 raise AlertError(f"invalid E.164 number: ...{phone[-4:]}")
             ids.append(sns.publish(PhoneNumber=phone, Message=message, MessageAttributes=attrs)["MessageId"])
         return ids
+
+    def verify_topic(self) -> dict[str, Any]:
+        """Read the topic's attributes: proves credentials + topic exist without sending."""
+        if not self._s.sns_topic_arn:
+            raise AlertError("SNS_TOPIC_ARN is not configured")
+        try:
+            a = self._sns().get_topic_attributes(TopicArn=self._s.sns_topic_arn)["Attributes"]
+        except (ClientError, BotoCoreError) as exc:
+            raise AlertError(f"cannot read SNS topic: {exc}") from exc
+        return {"topic": self._s.sns_topic_arn,
+                "subscriptions_confirmed": int(a.get("SubscriptionsConfirmed", 0)),
+                "subscriptions_pending": int(a.get("SubscriptionsPending", 0))}
 
     def _check_cooldown(self, lake_id: str) -> None:
         with self._lock:
