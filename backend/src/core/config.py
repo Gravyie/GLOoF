@@ -25,6 +25,16 @@ class Lake:
     half_size_deg: float  # half-width of the analysis window / 3D slab
     lake_elevation_m: float  # approximate surface elevation, used for the slab floor
     alert_language: str  # second language of the bilingual SMS ("hi" | "ne")
+    # A point inside the lake. The water polygon containing (or nearest to) it is
+    # "the lake"; "largest polygon" is fragile when a neighbouring lake is bigger.
+    seed: tuple[float, float] | None = None
+    utm_epsg: int = 32645  # metric CRS for boundary maths
+    # Documented real-world events shown on the archive timeline (facts, not model output).
+    events: tuple[dict, ...] = ()
+
+    @property
+    def seed_point(self) -> tuple[float, float]:
+        return self.seed or self.center
 
     @property
     def bbox(self) -> tuple[float, float, float, float]:
@@ -40,10 +50,19 @@ LAKES: dict[str, Lake] = {
         id="south_lhonak",
         name="South Lhonak Lake",
         country="India (Sikkim)",
-        center=(88.183, 27.913),
+        # Centre verified against Sentinel-2 imagery: the window covers the whole
+        # lake including the eastern (outlet / moraine) end that failed in 2023.
+        center=(88.196, 27.911),
         half_size_deg=0.025,
         lake_elevation_m=5200,
         alert_language="hi",
+        seed=(88.196, 27.9115),
+        utm_epsg=32645,
+        events=(
+            {"date": "2023-10-04", "label": "Outburst flood (GLOF)",
+             "detail": "Moraine-dammed lake breached on the night of 3-4 Oct 2023; "
+                       "the flood travelled down the Teesta valley and destroyed the Chungthang dam."},
+        ),
     ),
     "imja_tsho": Lake(
         id="imja_tsho",
@@ -53,6 +72,7 @@ LAKES: dict[str, Lake] = {
         half_size_deg=0.025,
         lake_elevation_m=5010,
         alert_language="ne",
+        utm_epsg=32645,
     ),
 }
 
@@ -93,6 +113,18 @@ class Settings(BaseSettings):
     growth_elevated_pct: float = 10.0
     growth_critical_pct: float = 25.0
 
+    # Boundary archive (multi-year water / ice outlines)
+    archive_dir: str = "archive"  # relative to backend/; committed so the demo works offline
+    archive_bucket: str | None = None  # if set, the archive is read from / written to S3
+    archive_prefix: str = "archive/"
+    archive_start: str = "2017-12-01"  # first Sentinel-2 L2A scenes over the Himalaya on Earth Search
+    # MM-DD window: open-water season. Ends early November: later, low sun casts long
+    # shadows and the lake starts to freeze, both of which NDWI misreads.
+    archive_season: str = "06-01,11-05"
+    archive_min_gap_days: int = 8
+    archive_max_cloud_fraction: float = 0.08
+    replay_duration_s: float = 90.0
+
     # Cache
     cache_ttl_seconds: int = 6 * 3600  # Sentinel-2 revisit is ~5 days
 
@@ -117,6 +149,16 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def season_window(self) -> tuple[str, str]:
+        a, b = (p.strip() for p in self.archive_season.split(","))
+        return a, b
+
+    @property
+    def sns_live(self) -> bool:
+        """Simulations/replays deliver for real only if BOTH flags say so."""
+        return self.sim_live_sms and not self.alert_dry_run
 
     @property
     def melt_months(self) -> set[int]:

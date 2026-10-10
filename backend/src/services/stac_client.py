@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from pystac import Asset, Item
 from pystac_client import Client
+from shapely.geometry import box, shape
 
 from src.core.config import Settings
 
@@ -98,6 +99,31 @@ def _to_scene(item: Item) -> SceneRef:
     )
 
 
+def covers(item: Item, bbox: tuple[float, float, float, float]) -> bool:
+    """True if the item's valid-data footprint contains the whole bbox.
+
+    Sentinel-2 MGRS tiles overlap; on a tile edge the window would be clipped
+    and silently analysed as a strip (we saw a 'lake' of 0.01 km2 that way).
+    """
+    if not item.geometry:
+        return True
+    try:
+        return shape(item.geometry).buffer(1e-9).contains(box(*bbox))
+    except Exception:  # malformed footprint: let the pixel reader decide
+        return True
+
+
+def _dedupe_by_date(scenes: list[SceneRef]) -> list[SceneRef]:
+    """Overlapping tiles / reprocessings duplicate an acquisition. Keep the least cloudy."""
+    best: dict[str, SceneRef] = {}
+    for sc in scenes:
+        d = sc.acquired.date().isoformat()
+        cur = best.get(d)
+        if cur is None or (sc.tile_cloud_cover or 0) < (cur.tile_cloud_cover or 0):
+            best[d] = sc
+    return list(best.values())
+
+
 class StacSceneFinder:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -137,11 +163,43 @@ class StacSceneFinder:
         except Exception as exc:
             raise StacError(f"STAC search failed: {exc}") from exc
 
+        return self._convert(items, bbox)
+
+    def _convert(self, items: list[Item], bbox: tuple[float, float, float, float]) -> list[SceneRef]:
         scenes: list[SceneRef] = []
         for item in items:
+            if not covers(item, bbox):
+                continue
             try:
                 scenes.append(_to_scene(item))
             except StacError as exc:
                 log.warning("skipping item: %s", exc)
+        scenes = _dedupe_by_date(scenes)
         scenes.sort(key=lambda sc: sc.acquired, reverse=True)
         return scenes
+
+    def find_scenes_between(
+        self,
+        bbox: tuple[float, float, float, float],
+        start: datetime,
+        end: datetime,
+        *,
+        max_tile_cloud: float = 60.0,
+        limit: int = 500,
+    ) -> list[SceneRef]:
+        """All scenes fully covering ``bbox`` in [start, end], one per date, newest first."""
+        try:
+            search = self._get_client().search(
+                collections=[self._settings.stac_collection],
+                bbox=list(bbox),
+                datetime=f"{start.isoformat()}/{end.isoformat()}",
+                query={"eo:cloud_cover": {"lt": max_tile_cloud}},
+                sortby="-properties.datetime",
+                max_items=limit,
+            )
+            items = list(search.items())
+        except StacError:
+            raise
+        except Exception as exc:
+            raise StacError(f"STAC search failed: {exc}") from exc
+        return self._convert(items, bbox)

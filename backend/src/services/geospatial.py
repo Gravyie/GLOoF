@@ -105,10 +105,14 @@ def read_band_window(
                 col1 = math.ceil(win.col_off + win.width)
                 row1 = math.ceil(win.row_off + win.height)
                 win = Window(col0, row0, col1 - col0, row1 - row0)
+                wanted = win.width * win.height
                 try:
                     win = win.intersection(Window(0, 0, src.width, src.height))
                 except Exception as exc:  # rasterio.errors.WindowError
                     raise GeospatialError("window does not intersect raster") from exc
+                # A window hanging off the tile edge would be analysed as a strip.
+                if win.width * win.height < 0.98 * wanted:
+                    raise GeospatialError("analysis window extends past the tile edge")
                 data = src.read(1, window=win)
                 return BandWindow(data, src.window_transform(win), src.crs)
 
@@ -210,6 +214,24 @@ def vectorize_mask(
             }
         )
     return out
+
+
+def select_lake(fc: dict[str, Any], seed: tuple[float, float], max_dist_deg: float = 0.005) -> dict[str, Any] | None:
+    """Return the water feature that is "the lake": the polygon containing the
+    seed point, else the nearest one within ``max_dist_deg`` (~500 m), else None.
+    Sets ``properties.primary`` accordingly on every feature (in place)."""
+    from shapely.geometry import Point
+
+    pt = Point(seed)
+    best, best_d = None, max_dist_deg
+    for f in fc.get("features", []):
+        f["properties"]["primary"] = False
+        d = shape(f["geometry"]).distance(pt)
+        if d < best_d or (d == 0 and best is not None and f["properties"]["area_m2"] > best["properties"]["area_m2"]):
+            best, best_d = f, d
+    if best is not None:
+        best["properties"]["primary"] = True
+    return best
 
 
 def _fc(feats: list[dict[str, Any]]) -> dict[str, Any]:

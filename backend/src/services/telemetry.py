@@ -21,6 +21,7 @@ from src.services.geospatial import (
     WaterParams,
     extract_water,
     read_band_window,
+    select_lake,
 )
 from src.services.stac_client import SceneRef, StacSceneFinder
 
@@ -99,7 +100,7 @@ class TelemetryService:
         if scene.swir:  # bilinear: 20 m SWIR -> 10 m grid
             swir = read_band_window(scene.swir.href, lake.bbox, like=green, resampling=Resampling.bilinear)
             swir_cal = (scene.swir.scale, scene.swir.offset)
-        return extract_water(
+        ex = extract_water(
             green,
             nir,
             scl,
@@ -109,6 +110,9 @@ class TelemetryService:
             swir=swir,
             swir_cal=swir_cal,
         )
+        lake_feat = select_lake(ex.feature_collection, lake.seed_point)
+        ex.stats["primary_area_m2"] = lake_feat["properties"]["area_m2"] if lake_feat else 0.0
+        return ex
 
     def analyse_scene(self, lake: Lake, scene: SceneRef) -> WaterExtraction:
         return self._store.get_or_compute(
@@ -231,6 +235,7 @@ def _lake_dict(lake: Lake) -> dict[str, Any]:
         "center": list(lake.center),
         "bbox": [w, s, e, n],
         "lake_elevation_m": lake.lake_elevation_m,
+        "utm_epsg": lake.utm_epsg,
     }
 
 
