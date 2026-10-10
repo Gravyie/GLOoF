@@ -1,0 +1,17 @@
+# Container image for the scheduled ingest Lambda (rasterio/GDAL + geopandas
+# exceed the 250 MB zip limit, so this ships as an image via ECR).
+#   docker build --platform linux/arm64 -f Dockerfile.lambda -t glof-ingest .
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY requirements-lambda.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
+
+COPY src ${LAMBDA_TASK_ROOT}/src
+
+# GDAL: anonymous range reads of public COGs, no directory listings.
+ENV AWS_NO_SIGN_REQUEST=YES \
+    GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR \
+    CPL_VSIL_CURL_ALLOWED_EXTENSIONS=.tif,.tiff \
+    ARCHIVE_DIR=/tmp/archive
+
+CMD ["src.lambda_ingest.handler"]
