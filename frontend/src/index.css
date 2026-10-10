@@ -1,31 +1,42 @@
 @import "tailwindcss";
 
+/* Dark mission-control: graphite panels over the terrain void, one accent (water blue).
+   System fonts only: no webfont request on the demo path. */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --color-ink: #14181d;
-  --color-paper: #f6f5f1;
-  --color-line: #dad7cd;
-  --color-muted: #666b72;
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --color-ink: #e7eaee;
+  --color-paper: #12161b;
+  --color-raise: #1a1f26;
+  --color-line: #262d36;
+  --color-muted: #8b95a1;
   --color-water: #3d9bff;
+  --color-void: #0b0e12;
 }
 
-html, body, #root { height: 100%; margin: 0; background: #101418; overflow: hidden; }
-body { font-family: var(--font-sans); font-size: 13px; color: #14181d; -webkit-font-smoothing: antialiased; }
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; margin: 0; background: #0b0e12; overflow: hidden; }
+body { font-family: var(--font-sans); font-size: 13px; color: #e7eaee; -webkit-font-smoothing: antialiased; }
 .maplibregl-canvas { outline: none; }
 
-/* Panels: flat paper, hairline border, small radius. No glow, no blur. */
-.panel { background: #f6f5f1; border: 1px solid #dad7cd; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
-.panel-title { font-size: 11px; font-weight: 600; color: #666b72; letter-spacing: .04em; text-transform: uppercase; }
+.panel { background: rgb(18 22 27 / .94); border: 1px solid #262d36; border-radius: 10px; box-shadow: 0 8px 30px rgb(0 0 0 / .35); }
+.panel-title { font-size: 11px; font-weight: 600; color: #8b95a1; letter-spacing: .06em; text-transform: uppercase; }
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.btn { border: 1px solid #c4c0b4; background: #fff; border-radius: 4px; padding: 5px 10px; font-weight: 500; }
-.btn:hover { background: #efede6; }
-.btn:disabled { opacity: .45; cursor: default; }
-.btn-primary { background: #14181d; color: #fff; border-color: #14181d; }
-.btn-primary:hover { background: #2a3037; }
-.chip { display: inline-block; border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: 600; }
-::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #c4c0b4; border-radius: 4px; }
+.btn { border: 1px solid #323a45; background: #1a1f26; color: #e7eaee; border-radius: 6px; padding: 5px 11px; font-weight: 500; transition: background .15s, transform .1s; }
+.btn:hover { background: #232a33; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn-primary { background: #e7eaee; color: #0b0e12; border-color: #e7eaee; }
+.btn-primary:hover { background: #ffffff; }
+.chip { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+input, select { color-scheme: dark; }
+.field { background: #0f1317; border: 1px solid #323a45; border-radius: 6px; padding: 5px 8px; color: #e7eaee; }
+::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #323a45; border-radius: 4px; }
 
-@keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-.slide-in { animation: slide-in .25s ease-out; }
-@media (prefers-reduced-motion: reduce) { .slide-in { animation: none; } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.slide-in { animation: slide-in .3s cubic-bezier(.16,1,.3,1); }
+@keyframes pulse-edge { 0%,100% { box-shadow: inset 0 0 0 0 transparent; } 50% { box-shadow: inset 0 0 60px 6px var(--pulse); } }
+.pulse-edge { animation: pulse-edge 1.6s ease-in-out 3; }
+@keyframes live-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.live-dot { animation: live-dot 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .slide-in, .pulse-edge, .live-dot { animation: none; } }

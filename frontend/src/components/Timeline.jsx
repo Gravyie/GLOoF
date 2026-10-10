@@ -51,9 +51,9 @@ export default function Timeline({ sim, controls }) {
         {s && <div className="absolute left-0 top-3 h-1.5 rounded" style={{ width: `${s.progress * 100}%`, background: LEVEL_STYLE[s.level].dot }} />}
         {sc?.events.map((e, i) => {
           const left = hToProgress(e.h) * 100
-          return <div key={i} className="absolute top-1.5 w-px h-5 bg-[#8c8f94]" style={{ left: `${left}%` }} title={`${clockLabel(e.h)}: ${e.label}`} />
+          return <div key={i} className="absolute top-1.5 w-px h-5 bg-[#5b6573]" style={{ left: `${left}%` }} title={`${clockLabel(e.h)}: ${e.label}`} />
         })}
-        {s && <div className="absolute top-1.5 size-3.5 -ml-[7px] rounded-full border-2 border-white shadow" style={{ left: `${s.progress * 100}%`, background: LEVEL_STYLE[s.level].dot, top: 7 }} />}
+        {s && <div className="absolute top-1.5 size-3.5 -ml-[7px] rounded-full border-2 border-[#0b0e12] shadow" style={{ left: `${s.progress * 100}%`, background: LEVEL_STYLE[s.level].dot, top: 7 }} />}
       </div>
       <div className="flex justify-between text-[11px] text-muted -mt-0.5">
         <span>{ev ? <><b className="text-ink font-medium">{ev.label}</b></> : 'Press Start to replay'}</span>

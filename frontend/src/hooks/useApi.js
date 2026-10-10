@@ -38,3 +38,5 @@ export const useLakes = () => useApi('/api/lakes')
 export const useTelemetry = (lakeId, refreshKey = 0) =>
   useApi(lakeId ? `/api/telemetry?lake=${lakeId}${refreshKey ? '&refresh=true' : ''}` : null)
 export const useTimeseries = (lakeId) => useApi(lakeId ? `/api/timeseries?lake=${lakeId}&n=6` : null)
+export const useArchive = (lakeId) => useApi(lakeId ? `/api/archive?lake=${lakeId}` : null)
+export const useSystem = () => useApi('/api/system')

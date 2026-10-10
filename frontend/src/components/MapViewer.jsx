@@ -24,7 +24,7 @@ const VOID_STYLE = {
  *        ice   - GeoJSON FeatureCollection of snow/ice polygons (or null)
  *        orbit - boolean, run the cinematic orbit
  */
-export default function MapViewer({ lake, water, ice, showWater = true, showIce = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6 }) {
+export default function MapViewer({ lake, water, ice, rings = null, baseline = null, showWater = true, showIce = true, showRings = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6 }) {
   const mapRef = useRef(null)
   const [ready, setReady] = useState(false)
 
@@ -178,6 +178,28 @@ export default function MapViewer({ lake, water, ice, showWater = true, showIce 
             type="line"
             layout={{ visibility: showIce ? 'visible' : 'none' }}
             paint={{ 'line-color': '#ffffff', 'line-width': 0.8, 'line-opacity': 0.7 }}
+          />
+        </Source>
+      )}
+
+      {/* Archive: one shoreline per past season ("tree rings"), coloured old -> new */}
+      {rings && (
+        <Source id="rings" type="geojson" data={rings}>
+          <Layer
+            id="rings-line"
+            type="line"
+            layout={{ visibility: showRings ? 'visible' : 'none', 'line-join': 'round' }}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': 1.4, 'line-opacity': ['get', 'opacity'] }}
+          />
+        </Source>
+      )}
+      {baseline && (
+        <Source id="baseline" type="geojson" data={baseline}>
+          <Layer
+            id="baseline-line"
+            type="line"
+            layout={{ visibility: showRings ? 'visible' : 'none' }}
+            paint={{ 'line-color': '#f5d06b', 'line-width': 1.6, 'line-dasharray': [2, 2], 'line-opacity': 0.9 }}
           />
         </Source>
       )}

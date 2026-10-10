@@ -14,7 +14,7 @@ function Row({ k, v, unit, warn }) {
   return (
     <div className="flex justify-between gap-3 py-1 border-b border-line last:border-0">
       <dt className="text-muted">{k}</dt>
-      <dd className={`num text-right ${warn ? 'font-semibold text-[#a3121f]' : ''}`}>{v}{unit && <span className="text-muted"> {unit}</span>}</dd>
+      <dd className={`num text-right ${warn ? 'font-semibold text-[#ff8a80]' : ''}`}>{v}{unit && <span className="text-muted"> {unit}</span>}</dd>
     </div>
   )
 }
@@ -25,7 +25,7 @@ function LevelScale({ level }) {
     <div className="flex gap-0.5 mt-3" aria-label={`Level ${level}`}>
       {LEVELS.map((l, i) => (
         <div key={l} className="flex-1">
-          <div className="h-1.5 rounded-sm" style={{ background: i <= idx ? LEVEL_STYLE[l].dot : '#dad7cd' }} />
+          <div className="h-1.5 rounded-sm" style={{ background: i <= idx ? LEVEL_STYLE[l].dot : '#262d36' }} />
           <div className={`text-[10px] mt-1 ${i === idx ? 'font-semibold' : 'text-muted'}`}>{LEVEL_STYLE[l].label}</div>
         </div>
       ))}
@@ -43,7 +43,7 @@ function Reasons({ reasons, flags }) {
           <span>{r.text}</span>
         </li>
       ))}
-      {flags?.map((f, i) => <li key={`f${i}`} className="text-[#7a5a00] bg-[#f7edbd] rounded px-2 py-1">{f}</li>)}
+      {flags?.map((f, i) => <li key={`f${i}`} className="text-[#f5d06b] bg-[#3a3010] rounded px-2 py-1">{f}</li>)}
     </ul>
   )
 }
@@ -85,7 +85,7 @@ function LiveBody({ telemetry, series }) {
     <>
       <div className="panel-title mt-4 mb-1">Latest clear satellite scene</div>
       {telemetry.loading && <p className="text-muted">Reading Sentinel-2 bands and computing water and ice outlines...</p>}
-      {telemetry.error && <p className="text-[#a3121f]">{telemetry.error.message}</p>}
+      {telemetry.error && <p className="text-[#ff8a80]">{telemetry.error.message}</p>}
       {t && (
         <dl>
           <Row k="Main lake area" v={fmtHa(t.stats.primary_area_m2)} unit="ha" />
@@ -117,7 +117,7 @@ export default function StatusPanel({ mode, lake, sim, telemetry, series, layers
   const flags = mode === 'replay' ? sim?.flags : liveTrend === 'UNRELIABLE' ? ['Trend looks implausible; treated as a data artefact, not growth'] : []
 
   return (
-    <aside className="panel absolute z-10 left-3 top-14 bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4">
+    <aside className="panel absolute z-10 left-3 top-[60px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4">
       <div className="panel-title">{lake.name} <span className="font-normal normal-case tracking-normal">· {lake.country}</span></div>
       <div className="mt-2 flex items-center gap-2">
         <LevelBadge level={level} big />

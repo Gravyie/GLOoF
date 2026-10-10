@@ -3,20 +3,20 @@ import { LEVEL_STYLE, clockLabel } from '../utils/format'
 import { postAlert } from '../utils/api'
 
 const STATUS = {
-  simulated: { text: 'Simulated delivery', bg: '#e7e5dd', fg: '#444' },
-  sent: { text: 'Sent via SNS', bg: '#dcefe2', fg: '#1f5a36' },
-  pending_approval: { text: 'Awaiting approval', bg: '#f7edbd', fg: '#5e4800' },
-  rejected: { text: 'Rejected', bg: '#e7e5dd', fg: '#444' },
-  failed: { text: 'Delivery failed', bg: '#f6c9bc', fg: '#7a1c0a' },
+  simulated: { text: 'Simulated delivery', bg: '#232a33', fg: '#aeb6c0' },
+  sent: { text: 'Sent via SNS', bg: '#13301f', fg: '#7fdb9a' },
+  pending_approval: { text: 'Awaiting approval', bg: '#3a3010', fg: '#f5d06b' },
+  rejected: { text: 'Rejected', bg: '#232a33', fg: '#aeb6c0' },
+  failed: { text: 'Delivery failed', bg: '#45161a', fg: '#ff8a80' },
 }
 
 function Phone({ alert }) {
   return (
-    <div className="mx-auto w-[220px] rounded-[26px] border-[5px] border-[#14181d] bg-[#fbfbf9] p-3 pt-5 min-h-[170px] relative">
-      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 h-1 w-10 rounded bg-[#14181d]" />
+    <div className="mx-auto w-[220px] rounded-[26px] border-[5px] border-[#2b323b] bg-[#06080a] p-3 pt-5 min-h-[170px] relative">
+      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 h-1 w-10 rounded bg-[#2b323b]" />
       <div className="text-center text-[10px] text-muted mb-2">Messages · GLOF-ALERT</div>
       {alert ? (
-        <div key={alert.id} className="slide-in rounded-xl rounded-tl-sm bg-[#e9e8e3] px-2.5 py-2 text-[11px] leading-snug whitespace-pre-wrap"
+        <div key={alert.id} className="slide-in rounded-xl rounded-tl-sm bg-[#1f262e] px-2.5 py-2 text-[11px] leading-snug whitespace-pre-wrap"
           style={alert.level === 'EVACUATE' ? { background: '#a3121f', color: '#fff' } : undefined}>
           {alert.message}
         </div>
@@ -29,7 +29,7 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
   const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && a.status !== 'pending_approval' && a.status !== 'rejected')
   const list = [...alerts].reverse()
   return (
-    <aside className="panel absolute z-10 right-3 top-14 bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
+    <aside className="panel absolute z-10 right-3 top-[60px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
       <div className="panel-title mb-2">Public alert, as received</div>
       <Phone alert={latestPublic} />
 
@@ -39,14 +39,14 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
       </div>
       {alerts.some((a) => a.status === 'pending_approval') && (
         <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key to approve"
-          className="w-full border border-line rounded px-2 py-1 mb-2 bg-white" autoComplete="off" />
+          className="field w-full mb-2" autoComplete="off" />
       )}
-      {error && <p className="text-[#a3121f] mb-2">{error}</p>}
+      {error && <p className="text-[#ff8a80] mb-2">{error}</p>}
       <ol className="space-y-2">
         {list.map((a) => {
           const ls = LEVEL_STYLE[a.level], st = STATUS[a.status] ?? STATUS.simulated
           return (
-            <li key={a.id} className="slide-in border border-line rounded bg-white p-2.5">
+            <li key={a.id} className="slide-in border border-line rounded bg-raise p-2.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="chip" style={{ background: ls.bg, color: ls.fg }}>{ls.label}</span>
                 <span className="font-medium">{a.audience_label}</span>
@@ -85,7 +85,7 @@ export function ManualAlert({ lake }) {
     catch (e) { setRes({ busy: false, data: null, error: e.message }) }
   }
   return (
-    <aside className="panel absolute z-10 right-3 top-14 w-[300px] max-w-[calc(100vw-1.5rem)] p-4 max-[1100px]:hidden">
+    <aside className="panel absolute z-10 right-3 top-[60px] w-[300px] max-w-[calc(100vw-1.5rem)] p-4 max-[1100px]:hidden">
       <div className="panel-title mb-2">Manual alert</div>
       <div className="flex gap-2 mb-2">
         {['WARNING', 'EVACUATE'].map((l) => (
@@ -96,11 +96,11 @@ export function ManualAlert({ lake }) {
         ))}
       </div>
       <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Operator key"
-        className="w-full border border-line rounded px-2 py-1 mb-2 bg-white" autoComplete="off" />
+        className="field w-full mb-2" autoComplete="off" />
       <button className={`btn w-full ${armed ? 'btn-primary' : ''}`} disabled={!key || res.busy} onClick={send}>
         {res.busy ? 'Sending...' : armed ? 'Click again to confirm' : 'Send alert'}
       </button>
-      {res.error && <p className="text-[#a3121f] mt-2">{res.error}</p>}
+      {res.error && <p className="text-[#ff8a80] mt-2">{res.error}</p>}
       {res.data && (
         <div className="mt-2 text-[12px]">
           <p className="font-medium">{res.data.dry_run ? 'Dry run: nothing was sent' : `Sent to ${res.data.recipients} recipient(s)`}</p>
