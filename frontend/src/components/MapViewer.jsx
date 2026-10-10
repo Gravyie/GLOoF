@@ -23,19 +23,31 @@ const VOID_STYLE = {
  *        water - GeoJSON FeatureCollection of water polygons (or null while loading)
  *        ice   - GeoJSON FeatureCollection of snow/ice polygons (or null)
  *        orbit - boolean, run the cinematic orbit
+ *        slabBbox - optional wider cut-out (e.g. to include the parent glacier); defaults to lake.bbox
+ *        glacier  - optional { outline, base, lost, gained } FeatureCollections (perennial ice, yearly)
+ *        rgi      - optional RGI reference FeatureCollection (drawn as a thin dotted line)
+ *        interactive / onMove / view - used by the side-by-side compare (camera sync)
  */
-export default function MapViewer({ lake, water, ice, rings = null, baseline = null, showWater = true, showIce = true, showRings = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6 }) {
+export default function MapViewer({ lake, water, ice, rings = null, baseline = null, showWater = true, showIce = true, showRings = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6, slabBbox = null, glacier = null, rgi = null, view = null, onMove = null }) {
   const mapRef = useRef(null)
   const [ready, setReady] = useState(false)
 
   // Derived, per-lake geometry. All memoised on the lake so they're stable.
+  const cut = slabBbox ?? lake.bbox
+  const cutKey = cut.join(',')
   const demUrl = useMemo(
-    () => registerSlab(lake.id, { bbox: lake.bbox, floorMeters: lake.lake_elevation_m - SLAB_DEPTH_M }),
-    [lake],
+    () => registerSlab(`${lake.id}${slabBbox ? '-wide' : ''}`, { bbox: cut, floorMeters: lake.lake_elevation_m - SLAB_DEPTH_M }),
+    [lake.id, cutKey],  // eslint-disable-line react-hooks/exhaustive-deps
   )
-  const mask = useMemo(() => buildInvertedMask(lake.bbox), [lake])
-  const outline = useMemo(() => buildSlabOutline(lake.bbox), [lake])
-  const camera = useMemo(() => slabCamera(lake.bbox), [lake])
+  const mask = useMemo(() => buildInvertedMask(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
+  const outline = useMemo(() => buildSlabOutline(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
+  const camera = useMemo(() => slabCamera(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compare mode: follow another map's camera.
+  useEffect(() => {
+    if (!ready || !view || !mapRef.current) return
+    mapRef.current.getMap().jumpTo(view)
+  }, [ready, view])
 
   // Turn on 3D terrain once the DEM source exists. Done by hand (rather than
   // the `terrain` prop) so we never reference a source before it is added.
@@ -114,6 +126,7 @@ export default function MapViewer({ lake, water, ice, rings = null, baseline = n
       maxPitch={85}
       attributionControl={false}
       onLoad={() => setReady(true)}
+      onMove={onMove ? (e) => onMove({ center: [e.viewState.longitude, e.viewState.latitude], zoom: e.viewState.zoom, pitch: e.viewState.pitch, bearing: e.viewState.bearing }) : undefined}
       style={{ width: '100%', height: '100%' }}
     >
       {/* Terrain mesh source */}
@@ -163,6 +176,34 @@ export default function MapViewer({ lake, water, ice, rings = null, baseline = n
       <Source id="slab-outline" type="geojson" data={outline}>
         <Layer id="slab-outline-line" type="line" paint={{ 'line-color': '#c9d1d9', 'line-width': 1, 'line-opacity': 0.55 }} />
       </Source>
+
+      {/* Perennial ice (yearly composite), change vs the baseline year, and the RGI reference */}
+      {glacier?.lost && (
+        <Source id="ice-lost" type="geojson" data={glacier.lost}>
+          <Layer id="ice-lost-fill" type="fill" paint={{ 'fill-color': '#d95926', 'fill-opacity': 0.55 }} />
+        </Source>
+      )}
+      {glacier?.gained && (
+        <Source id="ice-gained" type="geojson" data={glacier.gained}>
+          <Layer id="ice-gained-fill" type="fill" paint={{ 'fill-color': '#199e70', 'fill-opacity': 0.6 }} />
+        </Source>
+      )}
+      {glacier?.outline && (
+        <Source id="ice-year" type="geojson" data={glacier.outline}>
+          <Layer id="ice-year-fill" type="fill" paint={{ 'fill-color': '#e6eef6', 'fill-opacity': 0.32 }} />
+          <Layer id="ice-year-line" type="line" paint={{ 'line-color': '#f4f8fb', 'line-width': 1.1, 'line-opacity': 0.9 }} />
+        </Source>
+      )}
+      {glacier?.base && (
+        <Source id="ice-base" type="geojson" data={glacier.base}>
+          <Layer id="ice-base-line" type="line" paint={{ 'line-color': '#ffffff', 'line-width': 1.4, 'line-dasharray': [3, 2], 'line-opacity': 0.85 }} />
+        </Source>
+      )}
+      {rgi && (
+        <Source id="rgi" type="geojson" data={rgi}>
+          <Layer id="rgi-line" type="line" layout={{ 'line-cap': 'round' }} paint={{ 'line-color': '#9085e9', 'line-width': 1.4, 'line-dasharray': [0.2, 2.2], 'line-opacity': 0.95 }} />
+        </Source>
+      )}
 
       {/* Live snow/ice polygons derived from Sentinel-2 NDSI (under the water) */}
       {ice && (

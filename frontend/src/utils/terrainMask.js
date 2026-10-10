@@ -56,5 +56,10 @@ export function bboxContains([w, s, e, n], lng, lat) {
 /** Default cinematic camera for a slab. */
 export function slabCamera(bbox) {
   const [longitude, latitude] = bboxCenter(bbox)
-  return { longitude, latitude, zoom: 12.9, pitch: 62, bearing: -20 }
+  // 12.9 fits the original 0.05 deg slab; scale for wider cut-outs.
+  const span = Math.max(bbox[2] - bbox[0], bbox[3] - bbox[1])
+  const wide = span > 0.06
+  const zoom = Math.min(12.9, 12.9 - Math.log2(span / 0.05) - (wide ? 0.35 : 0))
+  // wide slabs hold high peaks: a lower pitch from the east keeps the lake in view
+  return { longitude, latitude, zoom, pitch: wide ? 52 : 62, bearing: wide ? -70 : -20 }
 }

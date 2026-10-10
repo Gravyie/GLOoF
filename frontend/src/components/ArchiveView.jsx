@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import MapViewer from './MapViewer'
 import AreaChart from './AreaChart'
+import GlacierCompare from './GlacierCompare'
+import { useArchiveIce } from '../hooks/useApi'
 import { createMorpher } from '../utils/morph'
 import { LEVELS, LEVEL_STYLE, fmtDate, fmtMonth, isoToOrd, ordToIso } from '../utils/format'
 
@@ -35,18 +37,40 @@ function useArchiveModel(archive) {
     const series = tl.frames.map((t, i) => ({
       day: days[i], value: t.indicators.smoothed_area_m2 / 1e4, raw: t.indicators.lake_area_m2 / 1e4, level: t.level,
     }))
-    const ice = frames.map((f, i) => ({ day: days[i], value: (f.stats.ice_area_m2 ?? 0) / 1e6, raw: null }))
     const events = (archive.lake.events ?? []).map((e) => ({ ...e, day: isoToOrd(e.date) }))
     // context water touching the window edge would drape down the slab walls: hide it
-    const [w, s, e, n] = archive.lake.bbox, m = 0.0008
+    const [w, s, e, n] = archive.lake.ice_bbox ?? archive.lake.bbox, m = 0.0008
     const inside = (f) => JSON.stringify(f.geometry.coordinates).match(/-?\d+\.\d+/g).every((v, k) => {
       const x = +v
       return k % 2 === 0 ? x > w + m && x < e - m : x > s + m && x < n - m
     })
     const context = frames.map((f) => f.water.features.filter(inside))
-    return { frames, tl, days, morph, rings, baseFrame, series, ice, events, context }
+    return { frames, tl, days, morph, rings, baseFrame, series, events, context }
   }, [archive])
 }
+
+/* yearly perennial ice: a composite "exists" from the start of its late-season window */
+export function useGlacierModel(ice) {
+  return useMemo(() => {
+    const pi = ice?.perennial_ice
+    if (!pi) return null
+    const start = pi.method.season.split(',')[0].trim()
+    const years = pi.years.map((y) => ({ ...y, day: isoToOrd(`${y.year}-${start}`) }))
+    const base = years.find((y) => y.year === pi.baseline_year)
+    const rgi = ice.ice_reference
+    const rgiDates = rgi ? [...new Set(rgi.features.map((f) => f.properties.src_date))].sort() : []
+    return { pi, years, base, rgi, rgiDates, start }
+  }, [ice])
+}
+
+export const glacierAt = (g, day) => {
+  if (!g || day == null) return null
+  let cur = null
+  for (const y of g.years) if (y.day <= day) cur = y
+  return cur
+}
+
+const fmtShortDate = (iso) => fmtDate(iso)
 
 /* --------------------------------------------------------------- left panel */
 function Metric({ k, v, unit, hint, warn }) {
@@ -59,7 +83,7 @@ function Metric({ k, v, unit, hint, warn }) {
   )
 }
 
-function RiskPanel({ model, cur, day, archive }) {
+function RiskPanel({ model, cur, day, archive, glacier, gYear }) {
   const level = cur?.level ?? 'NORMAL'
   const st = LEVEL_STYLE[level]
   const ind = cur?.indicators
@@ -122,15 +146,40 @@ function RiskPanel({ model, cur, day, archive }) {
             { value: base * (1 + th.growth_warning_pct / 100), label: `+${th.growth_warning_pct}% warning`, color: LEVEL_STYLE.WARNING.dot },
           ]} />
       </div>
-      <div className="mt-3">
-        <div className="flex items-baseline justify-between mb-1">
-          <div className="panel-title">Snow and ice in view, km²</div>
-          <div className="text-[10px] text-muted">includes seasonal snow</div>
+      {glacier && (
+        <>
+          <div className="panel-title mt-5 mb-1">Parent glacier (perennial ice)</div>
+          {gYear ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Metric k={`Ice, ${gYear.year}`} v={gYear.ice_area_km2.toFixed(2)} unit="km²"
+                hint={gYear.season_complete === false ? `Season in progress: ${gYear.scenes_used} scenes so far` : gYear.low_confidence ? `Low confidence: ${gYear.scenes_used} scene${gYear.scenes_used === 1 ? '' : 's'}` : `${gYear.scenes_used} late-season scenes`} />
+              <Metric k={`Lost since ${glacier.pi.baseline_year}`} v={gYear.lost_km2.toFixed(2)} unit="km²"
+                hint={`${(gYear.lost_km2 / glacier.base.ice_area_km2 * 100).toFixed(1)}% of ${glacier.pi.baseline_year} ice`} />
+              <Metric k={`Gained since ${glacier.pi.baseline_year}`} v={gYear.gained_km2.toFixed(2)} unit="km²" hint="mostly residual snow or shadow" />
+              <Metric k="Not observed" v={(gYear.unobserved_fraction * 100).toFixed(1)} unit="%" hint="cloud in every scene" />
+            </div>
+          ) : <p className="text-muted text-[12px]">First composite: autumn {glacier.pi.baseline_year}.</p>}
+        </>
+      )}
+      {glacier && (
+        <div className="mt-4">
+          <div className="flex items-baseline justify-between mb-1">
+            <div className="panel-title">Change vs {glacier.pi.baseline_year}, %</div>
+            <div className="text-[10px] text-muted">hollow: low confidence or incomplete season</div>
+          </div>
+          <AreaChart label="Change vs baseline" span={[model.days[0] - 25, model.days.at(-1) + 10]} playDay={day} height={104}
+            series={[
+              { key: 'lake', label: `Lake extent (vs ${model.tl.baseline.label} median)`, color: '#3d9bff',
+                points: model.tl.frames.map((t, i) => ({ day: model.days[i], value: t.indicators.growth_pct })),
+                fmt: (p) => `lake ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}%` },
+              { key: 'ice', label: `Perennial ice (vs ${glacier.pi.baseline_year})`, color: '#c9d4df', step: true,
+                points: glacier.years.map((y) => ({ day: y.day, value: (y.ice_area_km2 / glacier.base.ice_area_km2 - 1) * 100, hollow: y.low_confidence || y.season_complete === false, title: `${y.year}${y.season_complete === false ? ' (season in progress)' : ''}`, area: y.ice_area_km2 })),
+                fmt: (p) => `ice ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}% (${p.area.toFixed(2)} km²)` },
+            ]} />
         </div>
-        <AreaChart label="Snow and ice" points={model.ice} span={[model.days[0] - 25, model.days.at(-1) + 10]} playDay={day} color="#c9d4df" unit="km²" height={84} />
-      </div>
+      )}
       <p className="text-muted text-[10.5px] mt-4 leading-snug">
-        Every outline is a real Sentinel-2 L2A scene (ESA, via AWS Earth Search on AWS Open Data); water from NDWI, ice from NDSI.
+        Every outline is a real Sentinel-2 L2A scene (ESA, via AWS Earth Search on AWS Open Data); water from NDWI, perennial ice from late-season NDSI composites.
         Between scenes the shoreline is interpolated for display only. Risk rules are placeholders pending calibration.
       </p>
     </aside>
@@ -304,7 +353,10 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
   const model = useArchiveModel(archive)
   const [opKey, setOpKey] = useState('')
   const [err, setErr] = useState(null)
-  const [layers, setLayers] = useState({ rings: true, ice: true })
+  const [layers, setLayers] = useState(() => ({ rings: true, glacier: true, rgi: new URLSearchParams(location.search).has('rgi') }))
+  const [compare, setCompare] = useState(() => new URLSearchParams(location.search).has('compare'))
+  const ice = useArchiveIce(archive.has_ice_layer && (layers.glacier || layers.rgi || compare) ? archive.lake.id : null)
+  const glacier = useGlacierModel(ice.data)
   const [toast, setToast] = useState(null)
   const seen = useRef(new Set())
 
@@ -313,6 +365,11 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
   const fi = Math.max(i, 0)
   const cur = model?.tl.frames[fi]
   const frame = model?.frames[fi]
+  const gYear = glacierAt(glacier, day)
+  const baselineFeature = useMemo(() => (model?.baseFrame ? { type: 'Feature', properties: {}, geometry: model.baseFrame.lake.geometry } : null), [model])
+  const glacierLayers = useMemo(() => (layers.glacier && gYear ? {
+    outline: gYear.outline, base: glacier.base.outline, lost: gYear.lost, gained: gYear.gained,
+  } : null), [layers.glacier, gYear, glacier])
 
   // shoreline: hold the current real outline, then morph into the next one
   const water = useMemo(() => {
@@ -359,9 +416,10 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
 
   return (
     <>
-      <MapViewer key={lakeMeta.id} lake={lakeMeta} water={water} ice={layers.ice ? frame?.ice : null} rings={rings}
-        baseline={model.baseFrame ? { type: 'Feature', properties: {}, geometry: model.baseFrame.lake.geometry } : null}
-        showRings={layers.rings} orbit={orbit} waterEdge={level !== 'NORMAL' ? LEVEL_STYLE[level].dot : '#e8f3ff'} />
+      <MapViewer key={lakeMeta.id} lake={lakeMeta} water={water} rings={rings} slabBbox={lakeMeta.ice_bbox}
+        glacier={glacierLayers} rgi={layers.rgi ? glacier?.rgi : null}
+        baseline={baselineFeature}
+        showRings={layers.rings} orbit={orbit && !compare} waterEdge={level !== 'NORMAL' ? LEVEL_STYLE[level].dot : '#e8f3ff'} />
       {level === 'EVACUATE' || level === 'WARNING'
         ? <div key={level} className="pulse-edge pointer-events-none absolute inset-0 z-[5]" style={{ '--pulse': `${LEVEL_STYLE[level].dot}88` }} /> : null}
 
@@ -370,20 +428,42 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
         <div className="text-[11px] text-muted">Outline shown</div>
         <div className="num text-[13px]">{frame ? `${fmtDate(frame.date)}  ·  Sentinel-2 ${frame.scene.split('_')[0]}  ·  cloud ${(frame.stats.cloud_fraction * 100).toFixed(1)}%` : ''}</div>
       </div>
-      <div className="panel absolute z-10 right-[344px] bottom-[148px] px-3 py-2 text-[11px] space-y-1 max-[1100px]:hidden">
+      <div className="panel absolute z-10 right-[344px] top-[104px] w-[268px] max-h-[calc(100%-270px)] overflow-y-auto px-3 py-2 text-[11px] space-y-1 max-[1100px]:hidden">
         <label className="flex items-center gap-2"><input type="checkbox" checked={layers.rings} onChange={() => setLayers((l) => ({ ...l, rings: !l.rings }))} />
           <span className="inline-flex gap-px">{RING_RAMP.filter((_, k) => k % 2 === 0).map((c) => <span key={c} className="w-2 h-0.5" style={{ background: c }} />)}</span>
           Past seasons (old to new)</label>
         <div className="flex items-center gap-2 pl-[22px]"><span className="w-4 border-t border-dashed border-[#f5d06b]" />Baseline {model.tl.baseline.label}</div>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={layers.ice} onChange={() => setLayers((l) => ({ ...l, ice: !l.ice }))} />
-          <span className="w-3 h-2 rounded-sm bg-[#e6eef6]/60" />Snow and ice</label>
+        {archive.has_ice_layer && (
+          <>
+            <label className="flex items-center gap-2 pt-1 border-t border-line"><input type="checkbox" checked={layers.glacier} onChange={() => setLayers((l) => ({ ...l, glacier: !l.glacier }))} />
+              <span className="w-3 h-2 rounded-sm bg-[#e6eef6]/50 border border-[#f4f8fb]" />Snow and ice{gYear ? `, ${gYear.year}` : ''}
+              {gYear?.low_confidence && <span className="chip bg-[#3a3010] text-[#f5d06b]">low confidence</span>}
+              {gYear && gYear.season_complete === false && <span className="chip bg-[#232a33] text-[#aeb6c0]">season in progress</span>}</label>
+            {layers.glacier && (
+              <div className="pl-[22px] space-y-1">
+                <div className="flex items-center gap-2"><span className="w-4 border-t border-dashed border-white" />{glacier ? `${glacier.pi.baseline_year} baseline` : 'baseline'}</div>
+                <div className="flex items-center gap-2"><span className="w-3 h-2 rounded-sm bg-[#d95926]" />Ice lost since {glacier?.pi.baseline_year ?? ''}</div>
+                <div className="flex items-center gap-2"><span className="w-3 h-2 rounded-sm bg-[#199e70]" />Ice gained (likely artefact)</div>
+                <p className="text-[#c5ccd4] leading-snug">Perennial ice from late-season composites; seasonal snow excluded as far as possible.</p>
+                <p className="text-[#c5ccd4] leading-snug">Debris-covered ice is not detected, so the glacier tongue may appear smaller than it is.</p>
+                {ice.loading && <p className="text-muted">Loading ice layer...</p>}
+                {ice.error && <p className="text-[#ff8a80]">{ice.error.message}</p>}
+              </div>
+            )}
+            <label className="flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={layers.rgi} onChange={() => setLayers((l) => ({ ...l, rgi: !l.rgi }))} />
+              <span className="w-4 mt-1.5 border-t-2 border-dotted border-[#9085e9] shrink-0" />
+              <span>RGI 7.0 outline ({glacier?.rgiDates.length ? `source image ${glacier.rgiDates.map(fmtShortDate).join(', ')}` : 'about 2000'}; independent dataset, different method)</span></label>
+            <button className="btn w-full text-xs mt-1" onClick={() => setCompare(true)}>Compare years</button>
+          </>
+        )}
         <div className="flex items-center gap-2 pl-[22px]"><span className="w-3 h-2 rounded-sm bg-water" />Water (this scene)</div>
       </div>
 
-      <RiskPanel model={model} cur={cur} day={day} archive={archive} />
+      <RiskPanel model={model} cur={cur} day={day} archive={archive} glacier={glacier} gYear={gYear} />
       <Timeline model={model} state={replay.state} day={day} controls={replay} />
       <Notifications alerts={alerts} system={system} opKey={opKey} onOpKey={setOpKey} onDecide={decide} error={err} />
       <Toast alert={toast} />
+      {compare && glacier && <GlacierCompare lake={lakeMeta} glacier={glacier} model={model} onClose={() => setCompare(false)} />}
     </>
   )
 }

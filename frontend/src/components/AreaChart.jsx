@@ -11,16 +11,23 @@ function niceStep(span) {
 }
 
 /**
- * Single-series time chart over the replay span. Past (left of the playhead) is
- * full strength, the future is faded so the history reveals as the replay runs.
- * points: [{ day, value, raw }], thresholds: [{ value, label }]
+ * Time chart over the replay span, one shared y-axis. Past (left of the
+ * playhead) is full strength, the future is faded so the history reveals as
+ * the replay runs.
+ *
+ * Single series (original API): points=[{ day, value, raw }], color, unit.
+ * Several series: series=[{ key, label, color, unit, points, step, fmt }]; a
+ *   point may carry `hollow: true` (e.g. a low-confidence year).
+ * thresholds: [{ value, label, color }]
  */
-export default function AreaChart({ points, span, playDay, color, unit, thresholds = [], height = 112, label }) {
+export default function AreaChart({ points, span, playDay, color, unit, thresholds = [], height = 112, label, series }) {
   const [hover, setHover] = useState(null)
   const ref = useRef(null)
   const [d0, d1] = span
+  const all = useMemo(() => series ?? [{ key: 'v', label, color, unit, points }], [series, points, color, unit, label])
+
   const geo = useMemo(() => {
-    const vals = points.flatMap((p) => [p.value, p.raw]).concat(thresholds.map((t) => t.value)).filter((v) => v != null)
+    const vals = all.flatMap((s) => s.points.flatMap((p) => [p.value, p.raw])).concat(thresholds.map((t) => t.value)).filter((v) => v != null)
     let lo = Math.min(...vals), hi = Math.max(...vals)
     const step = niceStep(hi - lo || 1)
     lo = Math.floor(lo / step) * step
@@ -31,28 +38,46 @@ export default function AreaChart({ points, span, playDay, color, unit, threshol
     const y = (v) => height - PAD.b - ((v - lo) / (hi - lo || 1)) * (height - PAD.t - PAD.b)
     const years = []
     const y0 = +ordToIso(d0).slice(0, 4), y1 = +ordToIso(d1).slice(0, 4)
-    for (let yr = y0 + 1; yr <= y1; yr++) {
-      const ord = Math.floor(Date.UTC(yr, 0, 1) / 864e5) + 719163
-      years.push({ yr, x: x(ord) })
-    }
+    for (let yr = y0 + 1; yr <= y1; yr++) years.push({ yr, x: x(Math.floor(Date.UTC(yr, 0, 1) / 864e5) + 719163) })
     return { x, y, ticks, years }
-  }, [points, thresholds, d0, d1, height])
+  }, [all, thresholds, d0, d1, height])
 
   const { x, y } = geo
   const px = playDay != null ? x(Math.min(Math.max(playDay, d0), d1)) : null
-  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(p.day).toFixed(1)},${y(p.value).toFixed(1)}`).join('')
+  const pathOf = (s) => s.points.map((p, i) => {
+    const X = x(p.day).toFixed(1), Y = y(p.value).toFixed(1)
+    if (!i) return `M${X},${Y}`
+    return s.step ? `H${X}V${Y}` : `L${X},${Y}`
+  }).join('') + (s.step && s.points.length ? `H${x(d1).toFixed(1)}` : '')
   const clip = `clip-${label?.replace(/\W/g, '')}`
 
   const onMove = (e) => {
     const r = ref.current.getBoundingClientRect()
     const mx = ((e.clientX - r.left) / r.width) * W
-    let best = null
-    for (const p of points) if (!best || Math.abs(x(p.day) - mx) < Math.abs(x(best.day) - mx)) best = p
-    setHover(best)
+    const hits = all.map((s) => {
+      // step series: the value in force at the cursor; line series: nearest point
+      let best = null
+      if (s.step) {
+        for (const p of s.points) if (x(p.day) <= mx) best = p
+      } else {
+        for (const p of s.points) if (!best || Math.abs(x(p.day) - mx) < Math.abs(x(best.day) - mx)) best = p
+      }
+      return best && { s, p: best }
+    }).filter(Boolean)
+    setHover(hits.length ? { mx, hits } : null)
   }
 
   return (
     <figure className="relative m-0">
+      {series && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-1 text-[10.5px] text-muted">
+          {series.map((s) => (
+            <span key={s.key} className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-0.5 rounded" style={{ background: s.color }} />{s.label}
+            </span>
+          ))}
+        </div>
+      )}
       <svg ref={ref} viewBox={`0 0 ${W} ${height}`} className="w-full block" style={{ height }} role="img"
         aria-label={label} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <defs>
@@ -60,14 +85,12 @@ export default function AreaChart({ points, span, playDay, color, unit, threshol
         </defs>
         {geo.ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} stroke="#262d36" strokeWidth="1" />
+            <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} stroke={t === 0 && series ? '#4a5462' : '#262d36'} strokeWidth="1" />
             <text x={PAD.l - 5} y={y(t) + 3} textAnchor="end" className="num" fontSize="9" fill="#8b95a1">{t}</text>
           </g>
         ))}
         {geo.years.map(({ yr, x: gx }) => (
-          <text key={yr} x={gx} y={height - 5} textAnchor="middle" fontSize="9" fill="#8b95a1" className="num">
-            {`'${String(yr).slice(2)}`}
-          </text>
+          <text key={yr} x={gx} y={height - 5} textAnchor="middle" fontSize="9" fill="#8b95a1" className="num">{`'${String(yr).slice(2)}`}</text>
         ))}
         {thresholds.map((t) => (
           <g key={t.label}>
@@ -75,27 +98,39 @@ export default function AreaChart({ points, span, playDay, color, unit, threshol
             <text x={W - PAD.r} y={y(t.value) - 3} textAnchor="end" fontSize="9" fill="#aeb6c0">{t.label}</text>
           </g>
         ))}
-        {/* future: faded */}
-        <path d={path} fill="none" stroke={color} strokeWidth="1.5" opacity="0.22" />
-        {points.map((p, i) => p.raw != null && <circle key={i} cx={x(p.day)} cy={y(p.raw)} r="1.6" fill={color} opacity="0.18" />)}
-        {/* past: full strength */}
-        <g clipPath={`url(#${clip})`}>
-          {points.map((p, i) => p.raw != null && <circle key={i} cx={x(p.day)} cy={y(p.raw)} r="1.8" fill={color} opacity="0.45" />)}
-          <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-        </g>
+        {all.map((s) => (
+          <g key={s.key}>
+            {/* future: faded */}
+            <path d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.5" opacity="0.22" />
+            {s.points.map((p, i) => p.raw != null && <circle key={i} cx={x(p.day)} cy={y(p.raw)} r="1.6" fill={s.color} opacity="0.18" />)}
+            {/* past: full strength */}
+            <g clipPath={`url(#${clip})`}>
+              {s.points.map((p, i) => p.raw != null && <circle key={i} cx={x(p.day)} cy={y(p.raw)} r="1.8" fill={s.color} opacity="0.45" />)}
+              <path d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" />
+              {s.step && s.points.map((p, i) => (
+                <circle key={`m${i}`} cx={x(p.day)} cy={y(p.value)} r="3" fill={p.hollow ? '#12161b' : s.color} stroke={s.color} strokeWidth="1.5" />
+              ))}
+            </g>
+          </g>
+        ))}
         {px != null && <line x1={px} x2={px} y1={PAD.t - 4} y2={height - PAD.b} stroke="#e7eaee" strokeWidth="1" />}
         {hover && (
           <g>
-            <line x1={x(hover.day)} x2={x(hover.day)} y1={PAD.t} y2={height - PAD.b} stroke="#8b95a1" strokeWidth="1" />
-            <circle cx={x(hover.day)} cy={y(hover.value)} r="4" fill={color} stroke="#12161b" strokeWidth="2" />
+            <line x1={hover.mx} x2={hover.mx} y1={PAD.t} y2={height - PAD.b} stroke="#8b95a1" strokeWidth="1" />
+            {hover.hits.map(({ s, p }) => <circle key={s.key} cx={s.step ? hover.mx : x(p.day)} cy={y(p.value)} r="4" fill={s.color} stroke="#12161b" strokeWidth="2" />)}
           </g>
         )}
       </svg>
       {hover && (
-        <div className="pointer-events-none absolute -top-1 rounded-md border border-line bg-raise px-2 py-1 text-[11px] shadow-lg whitespace-nowrap"
-          style={{ left: `${Math.min(Math.max((x(hover.day) / W) * 100, 20), 70)}%`, transform: 'translate(-50%,-100%)' }}>
-          <div className="text-muted">{fmtDate(ordToIso(hover.day))}</div>
-          <div className="num">{hover.value.toFixed(1)} {unit}{hover.raw != null && hover.raw !== hover.value && <span className="text-muted"> (scene {hover.raw.toFixed(1)})</span>}</div>
+        <div className="pointer-events-none absolute -top-1 rounded-md border border-line bg-raise px-2 py-1 text-[11px] shadow-lg whitespace-nowrap z-10"
+          style={{ left: `${Math.min(Math.max((hover.mx / W) * 100, 22), 68)}%`, transform: 'translate(-50%,-100%)' }}>
+          {hover.hits.map(({ s, p }) => (
+            <div key={s.key}>
+              <span className="text-muted">{s.step ? p.title ?? '' : fmtDate(ordToIso(p.day))}</span>{' '}
+              <span className="num">{s.fmt ? s.fmt(p) : `${p.value.toFixed(1)} ${s.unit ?? ''}`}</span>
+              {p.raw != null && p.raw !== p.value && !s.fmt && <span className="text-muted"> (scene {p.raw.toFixed(1)})</span>}
+            </div>
+          ))}
         </div>
       )}
     </figure>
