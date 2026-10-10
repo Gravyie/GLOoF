@@ -41,3 +41,10 @@ Thumbs.db
 
 # --- Logs ---
 *.log
+
+# --- Terraform ---
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfstate*
+infra/terraform/terraform.tfvars
+backend/archive/.raw_*.json
