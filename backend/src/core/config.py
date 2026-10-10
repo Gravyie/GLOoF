@@ -29,6 +29,8 @@ class Lake:
     # "the lake"; "largest polygon" is fragile when a neighbouring lake is bigger.
     seed: tuple[float, float] | None = None
     utm_epsg: int = 32645  # metric CRS for boundary maths
+    # Wider window for the glacier layer only (the lake window would clip the parent glacier).
+    ice_bbox: tuple[float, float, float, float] | None = None
     # Documented real-world events shown on the archive timeline (facts, not model output).
     events: tuple[dict, ...] = ()
 
@@ -58,6 +60,9 @@ LAKES: dict[str, Lake] = {
         alert_language="hi",
         seed=(88.196, 27.9115),
         utm_epsg=32645,
+        # Covers RGI 7.0 G-15-07986 (parent glacier, terminus on the lake's west shore) and the
+        # neighbouring G-15-07987, plus ~500 m. Tile 45RXL contains it fully.
+        ice_bbox=(88.123, 27.850, 88.221, 27.936),
         events=(
             {"date": "2023-10-04", "label": "Outburst flood (GLOF)",
              "detail": "Moraine-dammed lake breached on the night of 3-4 Oct 2023; "
@@ -124,6 +129,13 @@ class Settings(BaseSettings):
     archive_min_gap_days: int = 8
     archive_max_cloud_fraction: float = 0.08
     replay_duration_s: float = 90.0
+
+    # Perennial ice composites (one outline per year from end-of-ablation scenes)
+    ice_season: str = "09-15,10-31"  # seasonal snow is at its minimum
+    ice_persistence: float = 0.7  # ice in >= this fraction of a pixel's valid observations
+    ice_min_scenes: int = 3  # fewer scenes -> low-confidence year
+    ice_baseline_year: int = 2018
+    ice_max_tile_cloud: float = 60.0
 
     # Cache
     cache_ttl_seconds: int = 6 * 3600  # Sentinel-2 revisit is ~5 days

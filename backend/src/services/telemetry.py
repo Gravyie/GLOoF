@@ -236,6 +236,7 @@ def _lake_dict(lake: Lake) -> dict[str, Any]:
         "bbox": [w, s, e, n],
         "lake_elevation_m": lake.lake_elevation_m,
         "utm_epsg": lake.utm_epsg,
+        "ice_bbox": list(lake.ice_bbox) if lake.ice_bbox else None,
     }
 
 

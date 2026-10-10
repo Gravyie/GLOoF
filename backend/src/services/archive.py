@@ -29,6 +29,7 @@ from src.core.config import Lake, Settings
 from src.services.boundary import frozen_fraction
 from src.services.geospatial import (
     SCL_CLOUD_SHADOW,
+    BandWindow,
     GeospatialError,
     WaterParams,
     extract_water,
@@ -103,6 +104,12 @@ def make_store(settings: Settings) -> ArchiveStore:
     if settings.archive_bucket:
         return S3ArchiveStore(settings.archive_bucket, settings.archive_prefix, settings.aws_region)
     return LocalArchiveStore(settings.archive_dir)
+
+
+def BandWindowRef(m) -> BandWindow:  # noqa: N802 - a grid-only BandWindow rebuilt from a cached mask
+    from rasterio.crs import CRS
+
+    return BandWindow(np.zeros(m.ice.shape, dtype=np.uint8), m.transform, CRS.from_string(m.crs))
 
 
 # --------------------------------------------------------------------------- #
@@ -282,6 +289,103 @@ class ArchiveBuilder:
         end = end or datetime.now(timezone.utc)
         return self.document(lake, self.finalise(lake, self.build_frames(lake, start, end, **kw)))
 
+    # -- perennial ice (additive keys; frames and the risk timeline never read them) --
+    ICE_KEYS = ("perennial_ice", "ice_reference")
+    MIN_SCENE_VALID = 0.3  # a scene must observe >= 30% of the window to count as a scene used
+
+    def build_ice(self, lake: Lake, *, cache_dir: Path, reuse_raw: bool = False, rgi: dict[str, Any] | None = None,
+                  workers: int = 6, progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+        from src.services import perennial_ice as pi
+
+        s = self._s
+        bbox = lake.ice_bbox or lake.bbox
+        cache = pi.MaskCache(cache_dir)
+        params = self._params()
+        masks: list[pi.SceneMask] = []
+        if reuse_raw:
+            masks = [m for m in (cache.get(sc) for sc in cache.scenes()) if m]
+            if not masks:
+                raise GeospatialError(f"--reuse-raw: no cached ice masks in {cache_dir}")
+        else:
+            season = tuple(p.strip() for p in s.ice_season.split(","))
+            first = datetime.fromisoformat(s.archive_start).year
+            scenes: list[SceneRef] = []
+            for y in range(first, datetime.now(timezone.utc).year + 1):
+                a, b = pi.season_bounds(y, season)
+                scenes += self._finder.find_scenes_between(bbox, a, b, max_tile_cloud=s.ice_max_tile_cloud, limit=200)
+            scenes.sort(key=lambda sc: sc.acquired)
+            ref = None
+            todo = []
+            for sc in scenes:
+                hit = cache.get(sc.item_id)
+                if hit:
+                    masks.append(hit)
+                else:
+                    todo.append(sc)
+            if masks:  # reuse the cached grid so every scene lands on the same pixels
+                ref = BandWindowRef(masks[0])
+            elif todo:
+                m, grid = pi.read_scene(todo[0], bbox, params)
+                cache.put(m)
+                masks.append(m)
+                ref = grid
+                todo = todo[1:]
+
+            def work(sc: SceneRef):
+                try:
+                    m, _ = pi.read_scene(sc, bbox, params, ref=ref)
+                    cache.put(m)
+                    return m
+                except Exception as exc:  # one bad COG must not sink the composite
+                    log.warning("ice: skip %s: %s", sc.item_id, exc)
+                    return None
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for m in pool.map(work, todo):
+                    if m:
+                        masks.append(m)
+                        if progress:
+                            progress(f"{m.acquired[:10]} valid {m.valid.mean():.0%} ice {m.ice.mean():.0%}")
+        shape0 = masks[0].ice.shape
+        masks = [m for m in masks if m.ice.shape == shape0 and m.valid.mean() >= self.MIN_SCENE_VALID]
+        by_year: dict[int, list] = {}
+        for m in sorted(masks, key=lambda m: m.acquired):
+            by_year.setdefault(pi.year_of(m.acquired), []).append(m)
+        built = pi.build_perennial(by_year, persistence=s.ice_persistence, min_scenes=s.ice_min_scenes,
+                                   baseline_year=s.ice_baseline_year, params=params)
+        years = built["years"]
+        season = tuple(p.strip() for p in s.ice_season.split(","))
+        now = datetime.now(timezone.utc)
+        for y in years:  # a season still in progress is a fact worth showing, not a judgement
+            y["season_complete"] = pi.season_bounds(y["year"], season)[1] < now
+        base = next(y for y in years if y["year"] == s.ice_baseline_year)
+        agreement = None
+        if rgi:
+            agreement = {
+                "parent_glacier": pi.rgi_agreement(base["outline"], rgi, ["RGI2000-v7.0-G-15-07986"], lake.utm_epsg),
+                "neighbour_glacier": pi.rgi_agreement(base["outline"], rgi, ["RGI2000-v7.0-G-15-07987"], lake.utm_epsg),
+            }
+        return {
+            "perennial_ice": {
+                "method": {
+                    "season": s.ice_season,
+                    "persistence": s.ice_persistence,
+                    "rule": "pixel is perennial ice if NDSI > 0.4 and NIR >= 0.11 (not water) in >= persistence of the "
+                            "late-season scenes in which it was observed; cloud, shadow and cirrus give no vote",
+                    "min_scenes_for_confidence": s.ice_min_scenes,
+                    "scene_min_observed_fraction": self.MIN_SCENE_VALID,
+                    "comparison": f"every year vs the fixed {s.ice_baseline_year} baseline, on the pixel grid, only where "
+                                  "both years were observed",
+                    "source": "Sentinel-2 L2A via AWS Earth Search (satellite-derived)",
+                },
+                "bbox": list(bbox),
+                "baseline_year": s.ice_baseline_year,
+                "years": years,
+                "rgi_agreement": agreement,
+            },
+            "ice_reference": rgi,
+        }
+
     def update(self, lake: Lake, doc: dict[str, Any] | None, *, now: datetime | None = None) -> tuple[dict[str, Any], list[dict]]:
         """Incremental refresh (what the scheduled Lambda runs): scenes newer than
         the last frame are analysed and appended. Returns (doc, new_frames)."""
@@ -298,5 +402,6 @@ class ArchiveBuilder:
             frames = self.finalise(lake, doc["frames"] + fresh)
             new_dates = {f["date"] for f in fresh}
             fresh = [f for f in frames if f["date"] in new_dates]
-            doc = {**self.document(lake, frames)}
+            carried = {k: doc[k] for k in self.ICE_KEYS if k in doc}  # never drop the ice layer
+            doc = {**self.document(lake, frames), **carried}
         return doc, fresh

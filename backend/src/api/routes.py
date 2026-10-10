@@ -195,7 +195,27 @@ def archive(request: Request, lake: str = Query("south_lhonak")):
     doc = st.archives.get(lk.id)
     if not doc:
         raise HTTPException(404, f"no boundary archive for '{lake}'. Build it: python -m scripts.build_archive --lake {lake}")
-    return {**doc, "timeline": st.timelines[lk.id], "store": st.archive_store.describe}
+    # The yearly ice layer is large and optional: served separately by /api/archive/ice,
+    # so this response keeps exactly its original shape for existing consumers.
+    base = {k: v for k, v in doc.items() if k not in ICE_KEYS}
+    base["lake"] = {**doc["lake"], "ice_bbox": list(lk.ice_bbox) if lk.ice_bbox else None}  # additive
+    base["has_ice_layer"] = bool(doc.get("perennial_ice"))
+    return {**base, "timeline": st.timelines[lk.id], "store": st.archive_store.describe}
+
+
+ICE_KEYS = ("perennial_ice", "ice_reference")
+
+
+@router.get("/archive/ice")
+def archive_ice(request: Request, lake: str = Query("south_lhonak")):
+    """Yearly perennial-ice composites, loss/gain vs the baseline year, and the RGI reference."""
+    lk = _lake_or_404(lake)
+    doc = request.app.state.archives.get(lk.id)
+    if not doc or not doc.get("perennial_ice"):
+        raise HTTPException(404, f"no perennial-ice layer for '{lake}'. Build it: "
+                                 f"python -m scripts.build_archive --lake {lake} --ice-only")
+    lake_meta = {**doc["lake"], "ice_bbox": list(lk.ice_bbox) if lk.ice_bbox else None}
+    return {"lake": lake_meta, **{k: doc.get(k) for k in ICE_KEYS}}
 
 
 @router.get("/archive/replay/state")
