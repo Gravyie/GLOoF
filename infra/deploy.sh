@@ -15,7 +15,7 @@ fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 1; }
 docker info >/dev/null 2>&1 || fail "Docker is not running"
 
 $tf init -input=false -reconfigure -backend-config=backend.hcl >/dev/null
-v() { echo "$1" | $tf console -var-file=terraform.tfvars 2>/dev/null | tr -d '"'; }
+v() { echo "$1" | $tf console -var-file=terraform.tfvars 2>/dev/null | grep -v "state lock" | tr -d '"'; }
 MAIN_PROFILE="$(v var.main_profile)"
 SMS_PROFILE="$(v var.sms_profile)"
 MAIN_REGION="$(v var.main_region)"
