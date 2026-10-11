@@ -28,8 +28,9 @@ variable "sms_spend_limit" {
 }
 
 variable "enable_filter_policies" {
-  type    = bool
-  default = false
+  description = "Phones receive only audience=public (drills, public alerts); alarms go to email only"
+  type        = bool
+  default     = true
 }
 
 variable "enable_sms_delivery_logs" {

@@ -51,14 +51,16 @@ resource "aws_sns_topic_policy" "glof_alerts" {
   policy = data.aws_iam_policy_document.topic.json
 }
 
-# No filter policies by default: a filter on an attribute a message lacks silently
-# drops delivery. enable_filter_policies adds them back later.
+# Filter policies keep phones for public alerts and drills only (audience=public), so
+# monitoring alarms (audience=operators) go to email instead of spending the SMS budget.
+# Every message the app, the Lambdas and the relay publish carries an audience
+# attribute; a message WITHOUT one would be dropped for these subscriptions.
 resource "aws_sns_topic_subscription" "sms" {
   for_each      = toset(nonsensitive(var.demo_sms_numbers))
   topic_arn     = aws_sns_topic.glof_alerts.arn
   protocol      = "sms"
   endpoint      = each.value
-  filter_policy = var.enable_filter_policies ? jsonencode({ audience = ["public", "operators"] }) : null
+  filter_policy = var.enable_filter_policies ? jsonencode({ audience = ["public"] }) : null
 }
 
 # Each email subscription stays PendingConfirmation until its link is clicked.
@@ -68,7 +70,8 @@ resource "aws_sns_topic_subscription" "email" {
   topic_arn     = aws_sns_topic.glof_alerts.arn
   protocol      = "email"
   endpoint      = each.value
-  filter_policy = var.enable_filter_policies ? jsonencode({ audience = ["public", "officials", "operators"] }) : null
+  # no filter: email receives every audience, alarms included. (Attributes cannot be
+  # set on a subscription that is still pending confirmation anyway.)
 }
 
 # Optional: SNS needs an IAM role to write SMS delivery status to CloudWatch Logs.
