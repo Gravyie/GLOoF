@@ -95,7 +95,7 @@ export default function AreaChart({ points, span, playDay, color, unit, threshol
         {thresholds.map((t) => (
           <g key={t.label}>
             <line x1={PAD.l} x2={W - PAD.r} y1={y(t.value)} y2={y(t.value)} stroke={t.color ?? '#8b95a1'} strokeWidth="1" strokeDasharray="3 3" opacity="0.8" />
-            <text x={W - PAD.r} y={y(t.value) - 3} textAnchor="end" fontSize="9" fill="#aeb6c0">{t.label}</text>
+            <text x={t.align === 'left' ? PAD.l + 3 : W - PAD.r} y={y(t.value) + (t.align === 'left' ? 10 : -3)} textAnchor={t.align === 'left' ? 'start' : 'end'} fontSize="9" fill="#aeb6c0">{t.label}</text>
           </g>
         ))}
         {all.map((s) => (

@@ -67,7 +67,7 @@ export default function App() {
     return (
       <main className="relative h-full w-full">
         {archive.data
-          ? <ArchiveView archive={archive.data} replay={replay} system={system.data} orbit={orbit} />
+          ? <ArchiveView archive={archive.data} replay={replay} system={system.data} orbit={orbit} onToggleOrbit={() => setOrbit((o) => !o)} />
           : (
             <div className="h-full grid place-items-center">
               <div className="panel p-6 max-w-md space-y-2">
@@ -77,9 +77,6 @@ export default function App() {
             </div>
           )}
         {top}
-        <button className="btn absolute z-10 left-[364px] top-[60px] text-xs max-[1100px]:hidden" onClick={() => setOrbit((o) => !o)}>
-          {orbit ? 'Stop rotation' : 'Rotate view'}
-        </button>
       </main>
     )
   }

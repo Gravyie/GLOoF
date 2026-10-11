@@ -28,7 +28,7 @@ const VOID_STYLE = {
  *        rgi      - optional RGI reference FeatureCollection (drawn as a thin dotted line)
  *        interactive / onMove / view - used by the side-by-side compare (camera sync)
  */
-export default function MapViewer({ lake, water, ice, rings = null, baseline = null, showWater = true, showIce = true, showRings = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6, slabBbox = null, glacier = null, rgi = null, view = null, onMove = null }) {
+export default function MapViewer({ lake, water, ice, rings = null, baseline = null, showWater = true, showIce = true, showRings = true, waterEdge = '#e8f3ff', orbit, orbitDegPerSec = 6, slabBbox = null, glacier = null, rgi = null, view = null, onMove = null, zoomOffset = 0, pitch = null }) {
   const mapRef = useRef(null)
   const [ready, setReady] = useState(false)
 
@@ -41,7 +41,7 @@ export default function MapViewer({ lake, water, ice, rings = null, baseline = n
   )
   const mask = useMemo(() => buildInvertedMask(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
   const outline = useMemo(() => buildSlabOutline(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
-  const camera = useMemo(() => slabCamera(cut), [cutKey])  // eslint-disable-line react-hooks/exhaustive-deps
+  const camera = useMemo(() => { const c = slabCamera(cut); return { ...c, zoom: c.zoom + zoomOffset, ...(pitch != null ? { pitch } : {}) } }, [cutKey, zoomOffset, pitch])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compare mode: follow another map's camera.
   useEffect(() => {
@@ -126,7 +126,8 @@ export default function MapViewer({ lake, water, ice, rings = null, baseline = n
       maxPitch={85}
       attributionControl={false}
       onLoad={() => setReady(true)}
-      onMove={onMove ? (e) => onMove({ center: [e.viewState.longitude, e.viewState.latitude], zoom: e.viewState.zoom, pitch: e.viewState.pitch, bearing: e.viewState.bearing }) : undefined}
+      // only user-driven moves propagate (programmatic jumpTo has no originalEvent), so two synced maps can't loop
+      onMove={onMove ? (e) => e.originalEvent && onMove({ center: [e.viewState.longitude, e.viewState.latitude], zoom: e.viewState.zoom, pitch: e.viewState.pitch, bearing: e.viewState.bearing }) : undefined}
       style={{ width: '100%', height: '100%' }}
     >
       {/* Terrain mesh source */}
@@ -180,18 +181,19 @@ export default function MapViewer({ lake, water, ice, rings = null, baseline = n
       {/* Perennial ice (yearly composite), change vs the baseline year, and the RGI reference */}
       {glacier?.lost && (
         <Source id="ice-lost" type="geojson" data={glacier.lost}>
-          <Layer id="ice-lost-fill" type="fill" paint={{ 'fill-color': '#d95926', 'fill-opacity': 0.55 }} />
+          <Layer id="ice-lost-fill" type="fill" paint={{ 'fill-color': '#ec7f2c', 'fill-opacity': 0.75 }} />
         </Source>
       )}
       {glacier?.gained && (
         <Source id="ice-gained" type="geojson" data={glacier.gained}>
-          <Layer id="ice-gained-fill" type="fill" paint={{ 'fill-color': '#199e70', 'fill-opacity': 0.6 }} />
+          {/* outline only: gain is mostly fresh snow and must not hide the terrain */}
+          <Layer id="ice-gained-line" type="line" paint={{ 'line-color': '#3fd39a', 'line-width': 1, 'line-opacity': 0.85 }} />
         </Source>
       )}
       {glacier?.outline && (
         <Source id="ice-year" type="geojson" data={glacier.outline}>
-          <Layer id="ice-year-fill" type="fill" paint={{ 'fill-color': '#e6eef6', 'fill-opacity': 0.32 }} />
-          <Layer id="ice-year-line" type="line" paint={{ 'line-color': '#f4f8fb', 'line-width': 1.1, 'line-opacity': 0.9 }} />
+          <Layer id="ice-year-fill" type="fill" paint={{ 'fill-color': '#e6eef6', 'fill-opacity': 0.18 }} />
+          <Layer id="ice-year-line" type="line" paint={{ 'line-color': '#f4f8fb', 'line-width': 0.9, 'line-opacity': 0.75 }} />
         </Source>
       )}
       {glacier?.base && (

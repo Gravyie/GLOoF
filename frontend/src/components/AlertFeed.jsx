@@ -29,7 +29,7 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
   const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && a.status !== 'pending_approval' && a.status !== 'rejected')
   const list = [...alerts].reverse()
   return (
-    <aside className="panel absolute z-10 right-3 top-[60px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
+    <aside className="panel absolute z-10 right-3 top-[72px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
       <div className="panel-title mb-2">Public alert, as received</div>
       <Phone alert={latestPublic} />
 
@@ -85,7 +85,7 @@ export function ManualAlert({ lake }) {
     catch (e) { setRes({ busy: false, data: null, error: e.message }) }
   }
   return (
-    <aside className="panel absolute z-10 right-3 top-[60px] w-[300px] max-w-[calc(100vw-1.5rem)] p-4 max-[1100px]:hidden">
+    <aside className="panel absolute z-10 right-3 top-[72px] w-[300px] max-w-[calc(100vw-1.5rem)] p-4 max-[1100px]:hidden">
       <div className="panel-title mb-2">Manual alert</div>
       <div className="flex gap-2 mb-2">
         {['WARNING', 'EVACUATE'].map((l) => (

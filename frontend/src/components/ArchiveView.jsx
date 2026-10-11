@@ -10,7 +10,16 @@ const BASE = import.meta.env.VITE_API_BASE ?? ''
 const MORPH_DAYS = 18 // shoreline moves over the last N days before the next real observation
 const RING_RAMP = ['#184f95', '#1c5cab', '#256abf', '#2a78d6', '#3987e5', '#5598e7', '#6da7ec', '#86b6ef', '#9ec5f4', '#b7d3f6']
 
-/* --------------------------------------------------------------- helpers */
+// What each level means for the people involved, in plain words.
+const LEVEL_MEANING = {
+  NORMAL: 'Nothing unusual in the satellite record on this date.',
+  WATCH: 'The lake is growing. At this level the control room is asked to keep a close eye on it.',
+  ADVISORY: 'The growth has kept going. At this level district officials are asked to get ready.',
+  WARNING: 'The lake edge has moved a long way. At this level people living downstream are warned.',
+  EVACUATE: 'Signs of an outburst. At this level people downstream are told to move to high ground.',
+}
+
+/* ------------------------------------------------------------------ data */
 function frameAt(days, day) {
   let i = -1
   for (let k = 0; k < days.length; k++) if (days[k] <= day + 1e-9) i = k
@@ -24,7 +33,7 @@ function useArchiveModel(archive) {
     const tl = archive.timeline
     const days = frames.map((f) => isoToOrd(f.date))
     const morph = createMorpher(frames.map((f) => f.lake.geometry))
-    // one ring per season: the frame nearest 15 Oct (end of melt, lake at its largest)
+    // one outline per season: the frame nearest 15 Oct (end of melt, lake at its largest)
     const byYear = new Map()
     frames.forEach((f, i) => {
       const yr = f.date.slice(0, 4)
@@ -38,7 +47,7 @@ function useArchiveModel(archive) {
       day: days[i], value: t.indicators.smoothed_area_m2 / 1e4, raw: t.indicators.lake_area_m2 / 1e4, level: t.level,
     }))
     const events = (archive.lake.events ?? []).map((e) => ({ ...e, day: isoToOrd(e.date) }))
-    // context water touching the window edge would drape down the slab walls: hide it
+    // other water touching the cut-out edge would drape down the slab walls: hide it
     const [w, s, e, n] = archive.lake.ice_bbox ?? archive.lake.bbox, m = 0.0008
     const inside = (f) => JSON.stringify(f.geometry.coordinates).match(/-?\d+\.\d+/g).every((v, k) => {
       const x = +v
@@ -70,295 +79,334 @@ export const glacierAt = (g, day) => {
   return cur
 }
 
-const fmtShortDate = (iso) => fmtDate(iso)
+/* close a popover or sheet on Escape or a click outside it */
+function useDismiss(open, onClose, { outside = true } = {}) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const key = (e) => e.key === 'Escape' && onClose()
+    const click = (e) => ref.current && !ref.current.contains(e.target) && onClose()
+    window.addEventListener('keydown', key)
+    const t = outside ? setTimeout(() => window.addEventListener('pointerdown', click), 0) : 0
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('pointerdown', click); clearTimeout(t) }
+  }, [open, onClose, outside])
+  return ref
+}
 
-/* --------------------------------------------------------------- left panel */
-function Metric({ k, v, unit, hint, warn }) {
+/* ------------------------------------------------------------------ summary card */
+function Stat({ label, value, unit, note, warn }) {
   return (
-    <div className="rounded-lg bg-raise border border-line px-3 py-2">
-      <div className="text-[11px] text-muted">{k}</div>
-      <div className={`num text-lg leading-tight ${warn ? 'text-[#ff8a80]' : ''}`}>{v}<span className="text-muted text-xs"> {unit}</span></div>
-      {hint && <div className="text-[10px] text-muted mt-0.5">{hint}</div>}
+    <div>
+      <div className="label">{label}</div>
+      <div className={`num text-[22px] leading-tight mt-0.5 ${warn ? 'text-[#ff8a80]' : ''}`}>
+        {value}<span className="text-muted text-[13px]"> {unit}</span>
+      </div>
+      {note && <div className="text-[12px] text-muted mt-0.5">{note}</div>}
     </div>
   )
 }
 
-function RiskPanel({ model, cur, day, archive, glacier, gYear }) {
+function SummaryCard({ archive, model, cur, day, started, glacier, gYear }) {
+  const [charts, setCharts] = useState(false)
+  const [how, setHow] = useState(false)
   const level = cur?.level ?? 'NORMAL'
   const st = LEVEL_STYLE[level]
   const ind = cur?.indicators
   const th = model.tl.thresholds
   const base = model.tl.baseline.area_m2 / 1e4
-  const idx = LEVELS.indexOf(level)
+  const held = cur && LEVELS.indexOf(cur.level) > LEVELS.indexOf(cur.raw_level) && LEVELS.indexOf(cur.level) >= 3
+  const span = [model.days[0] - 25, model.days.at(-1) + 10]
+
   return (
-    <aside className="panel absolute z-10 left-3 top-[60px] bottom-[148px] w-[340px] overflow-y-auto p-4 max-[1100px]:hidden">
-      <div className="flex items-baseline justify-between">
-        <div className="text-[15px] font-semibold">{archive.lake.name}</div>
-        <div className="text-muted text-[11px]">{archive.lake.country}</div>
-      </div>
-      <div className="mt-3 flex items-center gap-3">
-        <span key={level} className="slide-in rounded-md px-3 py-1 text-xl font-semibold" style={{ background: st.bg, color: st.fg }}>{st.label}</span>
-        <span className="text-muted text-[11px] leading-tight">Risk level a monitor would<br />have shown on this date</span>
-      </div>
-      <div className="flex gap-0.5 mt-3" aria-label={`Level ${level}`}>
-        {LEVELS.map((l, i) => (
-          <div key={l} className="flex-1">
-            <div className="h-1 rounded-sm transition-colors" style={{ background: i <= idx ? LEVEL_STYLE[l].dot : '#262d36' }} />
-            <div className={`text-[10px] mt-1 ${i === idx ? 'text-ink font-semibold' : 'text-muted'}`}>{LEVEL_STYLE[l].label}</div>
-          </div>
-        ))}
-      </div>
+    <section className="panel absolute z-10 left-4 top-[72px] w-[360px] max-h-[calc(100%-180px)] overflow-y-auto max-[1100px]:hidden" aria-label="Lake status">
+      <div className="p-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="text-[17px] font-semibold tracking-tight">{archive.lake.name}</h1>
+          <span className="label">{archive.lake.country}</span>
+        </div>
 
-      <ul className="mt-3 space-y-1.5 min-h-[24px]">
-        {(cur?.reasons ?? []).map((r, i) => (
-          <li key={i} className="flex gap-2 items-start text-[12px]">
-            <span className="mt-1.5 size-1.5 rounded-full shrink-0" style={{ background: LEVEL_STYLE[r.level].dot }} />
-            <span>{r.text}</span>
-          </li>
-        ))}
-        {!cur?.reasons?.length && <li className="text-muted text-[12px]">All indicators below threshold.</li>}
-        {cur && LEVELS.indexOf(cur.level) > LEVELS.indexOf(cur.raw_level) && LEVELS.indexOf(cur.level) >= 3 && (
-          <li className="text-[11px] text-muted border-l-2 border-line pl-2">
-            Held at {st.label}: Warning and Evacuate are cleared by an operator, not automatically, even when readings ease.
-          </li>
+        <div className="mt-4 flex items-center gap-3">
+          <span key={level} className="slide-in rounded-lg px-3 py-1 text-[18px] font-semibold" style={{ background: st.bg, color: st.fg }}>{st.label}</span>
+          <span className="text-[13px] text-muted">{day != null ? `on ${fmtDate(ordToIso(day))}` : ''}</span>
+        </div>
+        <p className="mt-3 text-[14px] leading-relaxed text-[#d3d9e0]">{LEVEL_MEANING[level]}</p>
+        {held && <p className="mt-2 text-[13px] text-muted">The warning stays on until an operator clears it, even if readings ease.</p>}
+        {cur?.flags?.map((f, i) => <p key={i} className="mt-2 text-[13px] text-[#f5d06b]">{f}</p>)}
+
+        {ind && (
+          <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
+            <Stat label="Lake size" value={(ind.smoothed_area_m2 / 1e4).toFixed(0)} unit="ha"
+              note={`${ind.growth_pct >= 0 ? '+' : ''}${ind.growth_pct.toFixed(0)}% vs ${model.tl.baseline.label}`} warn={ind.growth_pct >= th.growth_watch_pct} />
+            <Stat label="Shoreline moved" value={ind.advance_m.toFixed(0)} unit="m" note={`since ${model.tl.baseline.label}`} warn={ind.advance_m >= th.advance_watch_m} />
+            {glacier && gYear && (
+              <Stat label={`Glacier ice ${gYear.year}`} value={gYear.ice_area_km2.toFixed(1)} unit="km²"
+                note={gYear.season_complete === false ? 'season still in progress' : `${gYear.lost_km2.toFixed(1)} km² lost since ${glacier.pi.baseline_year}`} />
+            )}
+          </div>
         )}
-        {cur?.flags?.map((f, i) => <li key={`f${i}`} className="text-[11px] text-[#f5d06b] bg-[#3a3010] rounded px-2 py-1">{f}</li>)}
-      </ul>
 
-      {ind && (
-        <div className="grid grid-cols-2 gap-2 mt-4">
-          <Metric k="Lake extent" v={(ind.smoothed_area_m2 / 1e4).toFixed(1)} unit="ha" hint={`baseline ${base.toFixed(1)} ha (${model.tl.baseline.label})`} />
-          <Metric k="Growth vs baseline" v={`${ind.growth_pct >= 0 ? '+' : ''}${ind.growth_pct.toFixed(1)}`} unit="%" warn={ind.growth_pct >= th.growth_watch_pct} hint={`Watch at +${th.growth_watch_pct}%`} />
-          <Metric k="Shoreline advance" v={ind.advance_m.toFixed(0)} unit="m" warn={ind.advance_m >= th.advance_watch_m} hint="beyond the baseline outline" />
-          <Metric k="2-year trend" v={ind.growth_rate_pct_yr == null ? '-' : `${ind.growth_rate_pct_yr >= 0 ? '+' : ''}${ind.growth_rate_pct_yr.toFixed(1)}`} unit="%/yr" warn={(ind.growth_rate_pct_yr ?? 0) >= th.rate_advisory_pct_yr} hint="robust slope of lake extent" />
-        </div>
-      )}
-
-      <div className="mt-5">
-        <div className="flex items-baseline justify-between mb-1">
-          <div className="panel-title">Lake extent, ha</div>
-          <div className="text-[10px] text-muted">line: 3-scene median, dots: each scene</div>
-        </div>
-        <AreaChart label="Lake extent" points={model.series} span={[model.days[0] - 25, model.days.at(-1) + 10]} playDay={day} color="#3d9bff" unit="ha"
-          thresholds={[
-            { value: base, label: 'baseline', color: '#f5d06b' },
-            { value: base * (1 + th.growth_watch_pct / 100), label: `+${th.growth_watch_pct}% watch`, color: LEVEL_STYLE.WATCH.dot },
-            { value: base * (1 + th.growth_warning_pct / 100), label: `+${th.growth_warning_pct}% warning`, color: LEVEL_STYLE.WARNING.dot },
-          ]} />
+        {!started && (
+          <ol className="mt-5 space-y-2 text-[13px] text-[#c5ccd4] list-decimal pl-4 marker:text-muted">
+            <li>Press <b className="text-ink font-medium">Play</b> to watch nine years of real satellite images of this lake.</li>
+            <li>When the lake crosses a risk level, an alert is sent automatically. Open <b className="text-ink font-medium">Alerts</b> to see it.</li>
+            <li>Use <b className="text-ink font-medium">Compare years</b> to put two years side by side.</li>
+          </ol>
+        )}
       </div>
-      {glacier && (
-        <>
-          <div className="panel-title mt-5 mb-1">Parent glacier (perennial ice)</div>
-          {gYear ? (
-            <div className="grid grid-cols-2 gap-2">
-              <Metric k={`Ice, ${gYear.year}`} v={gYear.ice_area_km2.toFixed(2)} unit="km²"
-                hint={gYear.season_complete === false ? `Season in progress: ${gYear.scenes_used} scenes so far` : gYear.low_confidence ? `Low confidence: ${gYear.scenes_used} scene${gYear.scenes_used === 1 ? '' : 's'}` : `${gYear.scenes_used} late-season scenes`} />
-              <Metric k={`Lost since ${glacier.pi.baseline_year}`} v={gYear.lost_km2.toFixed(2)} unit="km²"
-                hint={`${(gYear.lost_km2 / glacier.base.ice_area_km2 * 100).toFixed(1)}% of ${glacier.pi.baseline_year} ice`} />
-              <Metric k={`Gained since ${glacier.pi.baseline_year}`} v={gYear.gained_km2.toFixed(2)} unit="km²" hint="mostly residual snow or shadow" />
-              <Metric k="Not observed" v={(gYear.unobserved_fraction * 100).toFixed(1)} unit="%" hint="cloud in every scene" />
-            </div>
-          ) : <p className="text-muted text-[12px]">First composite: autumn {glacier.pi.baseline_year}.</p>}
-        </>
-      )}
-      {glacier && (
-        <div className="mt-4">
-          <div className="flex items-baseline justify-between mb-1">
-            <div className="panel-title">Change vs {glacier.pi.baseline_year}, %</div>
-            <div className="text-[10px] text-muted">hollow: low confidence or incomplete season</div>
+
+      <div className="border-t border-white/[.06] px-5 py-3 flex gap-4 text-[13px]">
+        <button className="text-[#9ec5f4] hover:text-white" aria-expanded={charts} onClick={() => setCharts((v) => !v)}>{charts ? 'Hide charts' : 'Show charts'}</button>
+        <button className="text-[#9ec5f4] hover:text-white" aria-expanded={how} onClick={() => setHow((v) => !v)}>{how ? 'Hide how it works' : 'How it works'}</button>
+      </div>
+
+      {charts && (
+        <div className="px-5 pb-5 space-y-5">
+          <div>
+            <h2 className="panel-title mb-2">Lake size, hectares</h2>
+            <AreaChart label="Lake size" points={model.series} span={span} playDay={day} color="#3d9bff" unit="ha"
+              thresholds={[
+                { value: base, label: `${model.tl.baseline.label} size`, color: '#f5d06b', align: 'left' },
+                { value: base * (1 + th.growth_watch_pct / 100), label: `+${th.growth_watch_pct}%`, color: LEVEL_STYLE.WATCH.dot },
+                { value: base * (1 + th.growth_warning_pct / 100), label: `+${th.growth_warning_pct}%`, color: LEVEL_STYLE.WARNING.dot },
+              ]} />
+            <p className="text-[12px] text-muted mt-1">Dots are single images; the line smooths out cloud and shadow noise.</p>
           </div>
-          <AreaChart label="Change vs baseline" span={[model.days[0] - 25, model.days.at(-1) + 10]} playDay={day} height={104}
-            series={[
-              { key: 'lake', label: `Lake extent (vs ${model.tl.baseline.label} median)`, color: '#3d9bff',
-                points: model.tl.frames.map((t, i) => ({ day: model.days[i], value: t.indicators.growth_pct })),
-                fmt: (p) => `lake ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}%` },
-              { key: 'ice', label: `Perennial ice (vs ${glacier.pi.baseline_year})`, color: '#c9d4df', step: true,
-                points: glacier.years.map((y) => ({ day: y.day, value: (y.ice_area_km2 / glacier.base.ice_area_km2 - 1) * 100, hollow: y.low_confidence || y.season_complete === false, title: `${y.year}${y.season_complete === false ? ' (season in progress)' : ''}`, area: y.ice_area_km2 })),
-                fmt: (p) => `ice ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}% (${p.area.toFixed(2)} km²)` },
-            ]} />
+          {glacier && (
+            <div>
+              <h2 className="panel-title mb-2">Change since {glacier.pi.baseline_year}, percent</h2>
+              <AreaChart label="Change since baseline" span={span} playDay={day} height={110}
+                series={[
+                  { key: 'lake', label: 'Lake size', color: '#3d9bff',
+                    points: model.tl.frames.map((t, i) => ({ day: model.days[i], value: t.indicators.growth_pct })),
+                    fmt: (p) => `lake ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}%` },
+                  { key: 'ice', label: 'Glacier ice', color: '#c9d4df', step: true,
+                    points: glacier.years.map((y) => ({ day: y.day, value: (y.ice_area_km2 / glacier.base.ice_area_km2 - 1) * 100, hollow: y.low_confidence || y.season_complete === false, title: `${y.year}${y.season_complete === false ? ' (in progress)' : ''}`, area: y.ice_area_km2 })),
+                    fmt: (p) => `ice ${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}% (${p.area.toFixed(1)} km²)` },
+                ]} />
+              <p className="text-[12px] text-muted mt-1">Hollow points: few images or a season still in progress. Big jumps in ice are usually fresh snow.</p>
+            </div>
+          )}
         </div>
       )}
-      <p className="text-muted text-[10.5px] mt-4 leading-snug">
-        Every outline is a real Sentinel-2 L2A scene (ESA, via AWS Earth Search on AWS Open Data); water from NDWI, perennial ice from late-season NDSI composites.
-        Between scenes the shoreline is interpolated for display only. Risk rules are placeholders pending calibration.
-      </p>
+
+      {how && (
+        <div className="px-5 pb-5 text-[13px] text-[#c5ccd4] space-y-2 leading-relaxed">
+          <p><b className="text-ink font-medium">Images:</b> Sentinel-2 satellite images from the AWS Open Data registry, read straight from Amazon S3.</p>
+          <p><b className="text-ink font-medium">Outlines:</b> water and ice are traced from the pixels of every clear image. Between images the shoreline is drawn smoothly for display only.</p>
+          <p><b className="text-ink font-medium">Daily check:</b> an AWS Lambda function, run every day by Amazon EventBridge, looks for new images and stores the outlines in Amazon S3.</p>
+          <p><b className="text-ink font-medium">Alerts:</b> sent through Amazon SNS to email and SMS, each audience getting only its own messages.</p>
+          <p className="text-muted">Risk levels use placeholder thresholds that still need checking with the local disaster authority.</p>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ layers */
+function LayersMenu({ layers, setLayers, glacier, gYear, ice, hasIce, baselineLabel }) {
+  const [open, setOpen] = useState(false)
+  const ref = useDismiss(open, () => setOpen(false))
+  const toggle = (k) => setLayers((l) => ({ ...l, [k]: !l[k] }))
+  return (
+    <div ref={ref} className="relative">
+      <button className="pill" aria-expanded={open} onClick={() => setOpen((v) => !v)}>Layers</button>
+      {open && (
+        <div className="panel slide-in absolute right-0 top-11 w-[320px] p-4 space-y-4 text-[13px]">
+          <label className="flex gap-3 cursor-pointer">
+            <input type="checkbox" className="mt-1" checked={layers.rings} onChange={() => toggle('rings')} />
+            <span>
+              <span className="font-medium">Lake in past years</span>
+              <span className="block text-muted mt-0.5">One blue line per year, darker is older. The yellow dashed line is {baselineLabel}.</span>
+            </span>
+          </label>
+          {hasIce && (
+            <label className="flex gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1" checked={layers.glacier} onChange={() => toggle('glacier')} />
+              <span>
+                <span className="font-medium">Glacier ice{gYear ? `, ${gYear.year}` : ''}</span>
+                <span className="block text-muted mt-0.5">White is ice that lasted through autumn. Orange is ice lost since {glacier?.pi.baseline_year ?? 2018}. Green outline is ice that seems to have appeared, which is usually fresh snow.</span>
+                <span className="block text-muted mt-1.5">Seasonal snow is removed as far as possible. Ice under rock debris is not detected, so the glacier tongue may look smaller than it is.</span>
+                {gYear?.low_confidence && <span className="block text-[#f5d06b] mt-1.5">Few clear images this year: low confidence.</span>}
+                {gYear?.season_complete === false && <span className="block text-[#f5d06b] mt-1.5">{gYear.year} season is still in progress.</span>}
+                {ice.error && <span className="block text-[#ff8a80] mt-1.5">{ice.error.message}</span>}
+              </span>
+            </label>
+          )}
+          {hasIce && (
+            <label className="flex gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1" checked={layers.rgi} onChange={() => toggle('rgi')} />
+              <span>
+                <span className="font-medium">Glacier inventory outline</span>
+                <span className="block text-muted mt-0.5">RGI 7.0, from a satellite image of {glacier?.rgiDates.length ? glacier.rgiDates.map(fmtDate).join(', ') : 'about 2000'}. An independent dataset made a different way, shown for reference only.</span>
+              </span>
+            </label>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ alerts sheet */
+const STATUS = {
+  simulated: { text: 'Simulated', cls: 'text-[#aeb6c0]' },
+  sent: { text: 'Sent by Amazon SNS', cls: 'text-[#7fdb9a]' },
+  pending_approval: { text: 'Waiting for approval', cls: 'text-[#f5d06b]' },
+  rejected: { text: 'Rejected', cls: 'text-[#aeb6c0]' },
+  failed: { text: 'Delivery failed', cls: 'text-[#ff8a80]' },
+}
+
+function AlertsSheet({ alerts, system, opKey, onOpKey, onDecide, error, onClose, autopilot, setAutopilot, started }) {
+  const ref = useDismiss(true, onClose, { outside: false })
+  const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && ['sent', 'simulated'].includes(a.status))
+  const live = system?.sns?.mode === 'live'
+  return (
+    <aside ref={ref} className="sheet sheet-in absolute z-30 right-0 top-14 bottom-0 w-[400px] max-w-full overflow-y-auto" aria-label="Alerts">
+      <div className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-[17px] font-semibold">Alerts</h2>
+            <p className={`text-[13px] mt-1 ${live ? 'text-[#7fdb9a]' : 'text-muted'}`}>
+              {live ? 'Live: messages go out through Amazon SNS.' : 'Practice mode: messages are prepared but not sent.'}
+            </p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+
+        <label className="mt-4 flex gap-3 text-[13px] cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={autopilot} disabled={started} onChange={(e) => setAutopilot(e.target.checked)} />
+          <span>Send public warnings without waiting for an operator<span className="block text-muted">{started ? 'Reset the replay to change this.' : 'Untick to require approval first.'}</span></span>
+        </label>
+
+        {latestPublic && (
+          <div className="mt-6">
+            <h3 className="text-[13px] font-medium mb-2">What residents receive</h3>
+            <div key={latestPublic.id} className="slide-in rounded-2xl rounded-tl-md px-4 py-3 text-[13px] leading-snug whitespace-pre-wrap"
+              style={latestPublic.level === 'EVACUATE' ? { background: '#b3122a', color: '#fff' } : { background: '#1d242c' }}>
+              {latestPublic.message}
+            </div>
+          </div>
+        )}
+
+        <h3 className="text-[13px] font-medium mt-6 mb-3">Sent so far</h3>
+        {alerts.some((a) => a.status === 'pending_approval') && (
+          <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key"
+            aria-label="Operator key" className="field w-full mb-3" autoComplete="off" />
+        )}
+        {error && <p className="text-[#ff8a80] mb-3 text-[13px]">{error}</p>}
+        <ol className="space-y-5">
+          {[...alerts].reverse().map((a) => {
+            const ls = LEVEL_STYLE[a.level], stt = STATUS[a.status] ?? STATUS.simulated
+            return (
+              <li key={a.id} className="slide-in">
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="chip" style={{ background: ls.bg, color: ls.fg }}>{ls.label}</span>
+                  <span className="font-medium">{a.audience_label}</span>
+                  <span className="text-muted ml-auto">{a.date ? fmtMonth(a.date) : ''}</span>
+                </div>
+                <p className="mt-1.5 text-[13px] leading-snug text-[#c5ccd4] line-clamp-3">{a.message}</p>
+                <div className="flex items-center gap-3 mt-1.5 text-[12px]">
+                  <span className={stt.cls}>{stt.text}</span>
+                  {a.message_ids?.[0] && <span className="num text-muted" title={a.message_ids.join(', ')}>id {a.message_ids[0].slice(0, 8)}</span>}
+                  {a.status === 'pending_approval' && (
+                    <span className="ml-auto flex gap-2">
+                      <button className="btn btn-primary py-0.5 text-xs" disabled={!opKey} onClick={() => onDecide(a.id, 'approve')}>Approve</button>
+                      <button className="btn py-0.5 text-xs" disabled={!opKey} onClick={() => onDecide(a.id, 'reject')}>Reject</button>
+                    </span>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+          {!alerts.length && <li className="text-muted text-[13px]">Nothing yet. Press Play; alerts appear here as the lake crosses each risk level.</li>}
+        </ol>
+      </div>
     </aside>
   )
 }
 
-/* --------------------------------------------------------------- timeline */
-function Timeline({ model, state, day, controls }) {
+/* ------------------------------------------------------------------ timeline */
+function Timeline({ model, state, day, controls, speed, setSpeed, autopilot, onCompare, canCompare }) {
   const bar = useRef(null)
-  const [speed, setSpeed] = useState(1)
-  const [autopilot, setAutopilot] = useState(true)
   const [drag, setDrag] = useState(false)
   if (!state) return null
   const { start_day: d0, end_day: d1 } = state.span
   const pct = (d) => ((d - d0) / (d1 - d0)) * 100
   const p = day != null ? pct(day) : state.progress * 100
   const started = state.progress > 0
-
-  // level band: one segment per frame interval, coloured by the tracked level
   const seg = model.tl.frames.map((f, i) => ({ a: model.days[i], b: model.days[i + 1] ?? d1, level: f.level }))
   const years = []
   for (let yr = +state.span.start.slice(0, 4) + 1; yr <= +state.span.end.slice(0, 4); yr++) years.push({ yr, d: isoToOrd(`${yr}-01-01`) })
-
-  const seekFromEvent = (e) => {
-    const r = bar.current.getBoundingClientRect()
-    controls.seek((e.clientX - r.left) / r.width)
-  }
+  const seek = (e) => { const r = bar.current.getBoundingClientRect(); controls.seek((e.clientX - r.left) / r.width) }
 
   return (
-    <section className="panel absolute z-10 left-[364px] right-[344px] bottom-3 px-4 pt-3 pb-2.5 max-[1100px]:left-3 max-[1100px]:right-3">
-      <div className="flex items-center gap-3">
-        <button className="btn btn-primary w-[84px]" onClick={() => (state.running ? controls.pause() : controls.play(speed, autopilot))}>
-          {state.running ? 'Pause' : state.finished ? 'Replay' : started ? 'Resume' : 'Play'}
-        </button>
-        <button className="btn" onClick={controls.reset} disabled={!started}>Reset</button>
-        <div className="flex rounded-md overflow-hidden border border-[#323a45]" role="group" aria-label="Speed">
-          {[0.5, 1, 2, 4].map((v) => (
-            <button key={v} aria-pressed={speed === v} onClick={() => { setSpeed(v); controls.setSpeed(v) }}
-              className={`px-2 py-1 text-xs num ${speed === v ? 'bg-ink text-void font-semibold' : 'text-muted hover:bg-raise'}`}>{v}x</button>
-          ))}
-        </div>
-        <label className="flex items-center gap-1.5 text-[12px] text-muted" title="Off: public alerts wait for an operator to approve them">
-          <input type="checkbox" checked={autopilot} disabled={started} onChange={(e) => setAutopilot(e.target.checked)} />
-          Auto-approve public alerts
-        </label>
-        <div className="ml-auto text-right">
-          <div className="num text-[22px] font-medium leading-none tracking-tight">{day != null ? fmtDate(ordToIso(day)) : ''}</div>
-          <div className="text-muted text-[11px] mt-0.5">server clock, {Math.round((d1 - d0) / 365.25)} years in {state.duration_s / state.speed | 0}s</div>
-        </div>
+    <section className="panel absolute z-10 left-4 right-4 bottom-4 px-5 py-4 flex items-center gap-5" aria-label="Replay">
+      <button className="btn btn-primary w-[88px] h-10 text-[14px]" onClick={() => (state.running ? controls.pause() : controls.play(speed, autopilot))}>
+        {state.running ? 'Pause' : state.finished ? 'Replay' : started ? 'Resume' : 'Play'}
+      </button>
+      <div className="w-[128px] shrink-0">
+        <div className="num text-[19px] leading-none tracking-tight">{day != null ? fmtDate(ordToIso(day)) : ''}</div>
+        <button className="text-[12px] text-muted hover:text-ink mt-1" onClick={controls.reset} disabled={!started}>{started ? 'Back to start' : '9 years in 90 s'}</button>
       </div>
 
-      <div ref={bar} className="relative mt-3 h-11 cursor-pointer select-none"
-        onPointerDown={(e) => { setDrag(true); e.currentTarget.setPointerCapture(e.pointerId); seekFromEvent(e) }}
-        onPointerMove={(e) => drag && seekFromEvent(e)} onPointerUp={() => setDrag(false)}
+      <div ref={bar} className="relative flex-1 h-12 cursor-pointer select-none touch-none"
+        onPointerDown={(e) => { setDrag(true); e.currentTarget.setPointerCapture(e.pointerId); seek(e) }}
+        onPointerMove={(e) => drag && seek(e)} onPointerUp={() => setDrag(false)}
         role="slider" aria-label="Replay position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p)}>
-        {/* level band */}
-        <div className="absolute inset-x-0 top-4 h-2.5 rounded-sm overflow-hidden bg-line">
+        <div className="absolute inset-x-0 top-[18px] h-2 rounded-full overflow-hidden bg-white/10">
           {seg.map((s, i) => (
-            <div key={i} className="absolute top-0 bottom-0" style={{ left: `${pct(s.a)}%`, width: `${Math.max(pct(s.b) - pct(s.a), 0.15)}%`, background: LEVEL_STYLE[s.level].dot, opacity: s.level === 'NORMAL' ? 0.45 : 0.9 }} />
+            <div key={i} className="absolute top-0 bottom-0" style={{ left: `${pct(s.a)}%`, width: `${Math.max(pct(s.b) - pct(s.a), 0.15)}%`, background: LEVEL_STYLE[s.level].dot, opacity: s.level === 'NORMAL' ? 0.5 : 0.95 }} />
           ))}
-          <div className="absolute top-0 bottom-0 right-0 bg-[#0b0e12]/60" style={{ left: `${p}%` }} />
+          <div className="absolute top-0 bottom-0 right-0 bg-[#0b0e12]/65" style={{ left: `${p}%` }} />
         </div>
-        {/* observation ticks */}
-        {model.days.map((d, i) => <div key={i} className="absolute top-[30px] w-px h-1.5 bg-[#5b6573]" style={{ left: `${pct(d)}%` }} />)}
-        {/* alert crossings (where the level escalated) */}
-        {model.tl.events.filter((e) => e.escalation).map((e) => (
-          <div key={e.frame} className="absolute top-0 -translate-x-1/2 flex flex-col items-center" style={{ left: `${pct(model.days[e.frame])}%` }}
-            title={`${fmtDate(e.date)}: ${LEVEL_STYLE[e.from].label} to ${LEVEL_STYLE[e.to].label}`}>
-            <div className="size-2.5 rotate-45 border border-[#0b0e12]" style={{ background: LEVEL_STYLE[e.to].dot }} />
-          </div>
-        ))}
-        {/* documented real events */}
         {model.events.map((e) => (
-          <div key={e.date} className="absolute -top-0.5 bottom-1 -translate-x-1/2 flex flex-col items-center" style={{ left: `${pct(e.day)}%` }} title={e.detail}>
-            <div className="text-[10px] font-semibold text-[#ff8a80] whitespace-nowrap -mt-3.5">{e.label}</div>
-            <div className="w-px flex-1 bg-[#ff2d55]" />
+          <div key={e.date} className="absolute top-0 -translate-x-1/2 text-[11px] font-medium text-[#ff8a80] whitespace-nowrap" style={{ left: `${pct(e.day)}%` }} title={e.detail}>
+            {e.label}
           </div>
         ))}
-        {/* playhead */}
-        <div className="absolute top-2 h-[26px] w-0.5 -ml-px bg-ink rounded" style={{ left: `${p}%` }} />
+        {model.events.map((e) => <div key={`l${e.date}`} className="absolute top-[14px] h-4 w-px bg-[#ff8a80]" style={{ left: `${pct(e.day)}%` }} />)}
+        <div className="absolute top-[11px] size-[22px] -ml-[11px] rounded-full bg-ink border-4 border-[#10141a] shadow" style={{ left: `${p}%` }} />
         {years.map(({ yr, d }) => (
-          <div key={yr} className="absolute bottom-[-4px] -translate-x-1/2 text-[10px] text-muted num" style={{ left: `${pct(d)}%` }}>{yr}</div>
+          <div key={yr} className="absolute top-[32px] -translate-x-1/2 text-[11px] text-muted num" style={{ left: `${pct(d)}%` }}>{yr}</div>
         ))}
       </div>
+
+      <label className="text-[13px] text-muted flex items-center gap-2">Speed
+        <select className="field py-1" value={speed} onChange={(e) => { const v = +e.target.value; setSpeed(v); controls.setSpeed(v) }}>
+          {[0.5, 1, 2, 4].map((v) => <option key={v} value={v}>{v}x</option>)}
+        </select>
+      </label>
+      {canCompare && <button className="btn h-10" onClick={onCompare}>Compare years</button>}
     </section>
   )
 }
 
-/* --------------------------------------------------------------- notifications */
-const STATUS = {
-  simulated: { text: 'Simulated delivery', cls: 'bg-[#232a33] text-[#aeb6c0]' },
-  sent: { text: 'Delivered to SNS', cls: 'bg-[#13301f] text-[#7fdb9a]' },
-  pending_approval: { text: 'Awaiting approval', cls: 'bg-[#3a3010] text-[#f5d06b]' },
-  rejected: { text: 'Rejected', cls: 'bg-[#232a33] text-[#aeb6c0]' },
-  failed: { text: 'Delivery failed', cls: 'bg-[#45161a] text-[#ff8a80]' },
-}
-
-function Notifications({ alerts, system, opKey, onOpKey, onDecide, error }) {
-  const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && ['sent', 'simulated'].includes(a.status))
-  const live = system?.sns?.mode === 'live'
-  return (
-    <aside className="panel absolute z-10 right-3 top-[60px] bottom-3 w-[320px] overflow-y-auto p-4 max-[1100px]:hidden">
-      <div className="panel-title">Notifications</div>
-      <p className={`text-[11px] mt-1 ${live ? 'text-[#7fdb9a]' : 'text-muted'}`}>{system?.sns?.label ?? '...'}</p>
-
-      <div className="mt-3 mx-auto w-[236px] rounded-[30px] border-[6px] border-[#2b323b] bg-[#06080a] p-3 pt-6 min-h-[178px] relative">
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 h-1.5 w-14 rounded-full bg-[#2b323b]" />
-        <div className="text-center text-[10px] text-muted mb-2">GLOF-ALERT</div>
-        {latestPublic ? (
-          <div key={latestPublic.id} className="slide-in rounded-2xl rounded-tl-md px-3 py-2 text-[11px] leading-snug whitespace-pre-wrap"
-            style={latestPublic.level === 'EVACUATE' ? { background: '#b3122a', color: '#fff' } : { background: '#1f262e' }}>
-            {latestPublic.message}
-          </div>
-        ) : <div className="text-center text-muted text-[11px] mt-9 px-4">Public alerts appear here when the replay crosses Warning.</div>}
-      </div>
-
-      <div className="flex items-baseline justify-between mt-5 mb-2">
-        <div className="panel-title">Dispatch log</div>
-        <div className="text-muted text-[11px]">{alerts.length} message{alerts.length === 1 ? '' : 's'}</div>
-      </div>
-      {alerts.some((a) => a.status === 'pending_approval') && (
-        <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key to approve"
-          aria-label="Operator key" className="field w-full mb-2" autoComplete="off" />
-      )}
-      {error && <p className="text-[#ff8a80] mb-2 text-[12px]">{error}</p>}
-      <ol className="space-y-2">
-        {[...alerts].reverse().map((a) => {
-          const ls = LEVEL_STYLE[a.level], st = STATUS[a.status] ?? STATUS.simulated
-          return (
-            <li key={a.id} className="slide-in rounded-lg border border-line bg-raise p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="chip" style={{ background: ls.bg, color: ls.fg }}>{ls.label}</span>
-                <span className="font-medium text-[12px]">{a.audience_label}</span>
-                <span className="num text-muted text-[11px] ml-auto">{a.date ? fmtMonth(a.date) : ''}</span>
-              </div>
-              <p className="mt-1.5 text-[11.5px] leading-snug text-[#c5ccd4] line-clamp-3">{a.message}</p>
-              <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <span className={`chip ${st.cls}`}>{st.text}</span>
-                {a.message_ids?.[0] && <span className="num text-[10px] text-muted truncate max-w-[150px]" title={a.message_ids.join(', ')}>id {a.message_ids[0].slice(0, 8)}</span>}
-                {a.status === 'pending_approval' && (
-                  <span className="ml-auto flex gap-1.5">
-                    <button className="btn btn-primary py-0.5 text-xs" disabled={!opKey} onClick={() => onDecide(a.id, 'approve')}>Approve</button>
-                    <button className="btn py-0.5 text-xs" disabled={!opKey} onClick={() => onDecide(a.id, 'reject')}>Reject</button>
-                  </span>
-                )}
-              </div>
-            </li>
-          )
-        })}
-        {!alerts.length && <li className="text-muted text-[12px]">Press play. As the replay passes a date where the outline crossed a risk threshold, the alert is dispatched automatically by the server.</li>}
-      </ol>
-    </aside>
-  )
-}
-
-/* --------------------------------------------------------------- toast */
+/* ------------------------------------------------------------------ toast */
 function Toast({ alert }) {
   if (!alert) return null
   const st = LEVEL_STYLE[alert.level]
   return (
-    <div key={alert.id} className="slide-in absolute z-30 top-[60px] left-1/2 -translate-x-1/2 rounded-lg px-4 py-2.5 shadow-2xl flex items-center gap-3"
+    <div key={alert.id} className="slide-in absolute z-20 top-[72px] left-1/2 -translate-x-1/2 rounded-xl px-4 py-2.5 shadow-2xl text-[13px]"
       style={{ background: st.bg, color: st.fg, border: `1px solid ${st.dot}` }} role="status">
-      <span className="font-semibold">{st.label} issued</span>
-      <span className="text-[12px] opacity-90">{alert.date ? fmtDate(alert.date) : ''}, {alert.audience_label.toLowerCase()} notified ({alert.status === 'sent' ? 'via SNS' : alert.status.replace('_', ' ')})</span>
+      <b className="font-semibold">{st.label}</b>: {alert.audience_label.toLowerCase()} notified{alert.date ? `, ${fmtMonth(alert.date)}` : ''}
     </div>
   )
 }
 
-/* --------------------------------------------------------------- view */
-export default function ArchiveView({ archive, replay, system, orbit }) {
+/* ------------------------------------------------------------------ view */
+export default function ArchiveView({ archive, replay, system, orbit, onToggleOrbit }) {
   const model = useArchiveModel(archive)
   const [opKey, setOpKey] = useState('')
   const [err, setErr] = useState(null)
-  const [layers, setLayers] = useState(() => ({ rings: true, glacier: true, rgi: new URLSearchParams(location.search).has('rgi') }))
+  const [layers, setLayers] = useState(() => ({ rings: true, glacier: false, rgi: new URLSearchParams(location.search).has('rgi') }))
   const [compare, setCompare] = useState(() => new URLSearchParams(location.search).has('compare'))
-  const ice = useArchiveIce(archive.has_ice_layer && (layers.glacier || layers.rgi || compare) ? archive.lake.id : null)
-  const glacier = useGlacierModel(ice.data)
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const [speed, setSpeed] = useState(1)
+  const [autopilot, setAutopilot] = useState(true)
   const [toast, setToast] = useState(null)
   const seen = useRef(new Set())
+  const ice = useArchiveIce(archive.has_ice_layer && (layers.glacier || layers.rgi || compare) ? archive.lake.id : null)
+  const glacier = useGlacierModel(ice.data)
 
   const day = replay.day ?? replay.state?.day ?? null
   const i = model && day != null ? frameAt(model.days, day) : -1
@@ -391,16 +439,16 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
     }
   }, [model, day])
 
-  const alerts = replay.state?.alerts ?? []
+  const alerts = useMemo(() => replay.state?.alerts ?? [], [replay.state?.alerts])
   useEffect(() => {
     for (const a of alerts) {
       if (seen.current.has(a.id)) continue
       seen.current.add(a.id)
-      if (a.audience === 'public' || a.level === 'WATCH' || a.level === 'ADVISORY') setToast(a)
+      if (!alertsOpen) setToast(a)  // eslint-disable-line react-hooks/set-state-in-effect
     }
     if (!alerts.length) seen.current.clear()
-  }, [alerts])
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 4200); return () => clearTimeout(t) }, [toast])
+  }, [alerts, alertsOpen])
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 4000); return () => clearTimeout(t) }, [toast])
 
   const decide = async (id, verb) => {
     setErr(null)
@@ -413,57 +461,46 @@ export default function ArchiveView({ archive, replay, system, orbit }) {
   if (!model) return null
   const level = cur?.level ?? 'NORMAL'
   const lakeMeta = archive.lake
+  const started = (replay.state?.progress ?? 0) > 0
+  const lastLevel = alerts.length ? LEVEL_STYLE[alerts.at(-1).level] : null
 
   return (
     <>
       <MapViewer key={lakeMeta.id} lake={lakeMeta} water={water} rings={rings} slabBbox={lakeMeta.ice_bbox}
-        glacier={glacierLayers} rgi={layers.rgi ? glacier?.rgi : null}
-        baseline={baselineFeature}
+        glacier={glacierLayers} rgi={layers.rgi ? glacier?.rgi : null} baseline={baselineFeature}
         showRings={layers.rings} orbit={orbit && !compare} waterEdge={level !== 'NORMAL' ? LEVEL_STYLE[level].dot : '#e8f3ff'} />
       {level === 'EVACUATE' || level === 'WARNING'
-        ? <div key={level} className="pulse-edge pointer-events-none absolute inset-0 z-[5]" style={{ '--pulse': `${LEVEL_STYLE[level].dot}88` }} /> : null}
+        ? <div key={level} className="pulse-edge pointer-events-none absolute inset-0 z-[5]" style={{ '--pulse': `${LEVEL_STYLE[level].dot}66` }} /> : null}
 
-      {/* scene caption + legend, top-centre of the map */}
-      <div className="absolute z-10 top-[60px] left-1/2 -translate-x-1/2 text-center pointer-events-none max-[1100px]:hidden">
-        <div className="text-[11px] text-muted">Outline shown</div>
-        <div className="num text-[13px]">{frame ? `${fmtDate(frame.date)}  ·  Sentinel-2 ${frame.scene.split('_')[0]}  ·  cloud ${(frame.stats.cloud_fraction * 100).toFixed(1)}%` : ''}</div>
-      </div>
-      <div className="panel absolute z-10 right-[344px] top-[104px] w-[268px] max-h-[calc(100%-270px)] overflow-y-auto px-3 py-2 text-[11px] space-y-1 max-[1100px]:hidden">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={layers.rings} onChange={() => setLayers((l) => ({ ...l, rings: !l.rings }))} />
-          <span className="inline-flex gap-px">{RING_RAMP.filter((_, k) => k % 2 === 0).map((c) => <span key={c} className="w-2 h-0.5" style={{ background: c }} />)}</span>
-          Past seasons (old to new)</label>
-        <div className="flex items-center gap-2 pl-[22px]"><span className="w-4 border-t border-dashed border-[#f5d06b]" />Baseline {model.tl.baseline.label}</div>
-        {archive.has_ice_layer && (
-          <>
-            <label className="flex items-center gap-2 pt-1 border-t border-line"><input type="checkbox" checked={layers.glacier} onChange={() => setLayers((l) => ({ ...l, glacier: !l.glacier }))} />
-              <span className="w-3 h-2 rounded-sm bg-[#e6eef6]/50 border border-[#f4f8fb]" />Snow and ice{gYear ? `, ${gYear.year}` : ''}
-              {gYear?.low_confidence && <span className="chip bg-[#3a3010] text-[#f5d06b]">low confidence</span>}
-              {gYear && gYear.season_complete === false && <span className="chip bg-[#232a33] text-[#aeb6c0]">season in progress</span>}</label>
-            {layers.glacier && (
-              <div className="pl-[22px] space-y-1">
-                <div className="flex items-center gap-2"><span className="w-4 border-t border-dashed border-white" />{glacier ? `${glacier.pi.baseline_year} baseline` : 'baseline'}</div>
-                <div className="flex items-center gap-2"><span className="w-3 h-2 rounded-sm bg-[#d95926]" />Ice lost since {glacier?.pi.baseline_year ?? ''}</div>
-                <div className="flex items-center gap-2"><span className="w-3 h-2 rounded-sm bg-[#199e70]" />Ice gained (likely artefact)</div>
-                <p className="text-[#c5ccd4] leading-snug">Perennial ice from late-season composites; seasonal snow excluded as far as possible.</p>
-                <p className="text-[#c5ccd4] leading-snug">Debris-covered ice is not detected, so the glacier tongue may appear smaller than it is.</p>
-                {ice.loading && <p className="text-muted">Loading ice layer...</p>}
-                {ice.error && <p className="text-[#ff8a80]">{ice.error.message}</p>}
-              </div>
-            )}
-            <label className="flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={layers.rgi} onChange={() => setLayers((l) => ({ ...l, rgi: !l.rgi }))} />
-              <span className="w-4 mt-1.5 border-t-2 border-dotted border-[#9085e9] shrink-0" />
-              <span>RGI 7.0 outline ({glacier?.rgiDates.length ? `source image ${glacier.rgiDates.map(fmtShortDate).join(', ')}` : 'about 2000'}; independent dataset, different method)</span></label>
-            <button className="btn w-full text-xs mt-1" onClick={() => setCompare(true)}>Compare years</button>
-          </>
-        )}
-        <div className="flex items-center gap-2 pl-[22px]"><span className="w-3 h-2 rounded-sm bg-water" />Water (this scene)</div>
+      <SummaryCard archive={archive} model={model} cur={cur} day={day} started={started} glacier={layers.glacier ? glacier : null} gYear={gYear} />
+
+      <div className="absolute z-20 right-4 top-[72px] flex items-center gap-2 max-[1100px]:hidden">
+        <button className="pill" onClick={onToggleOrbit} aria-pressed={orbit}>{orbit ? 'Stop turning' : 'Turn view'}</button>
+        <LayersMenu layers={layers} setLayers={setLayers} glacier={glacier} gYear={gYear} ice={ice} hasIce={archive.has_ice_layer} baselineLabel={model.tl.baseline.label} />
+        <button className="pill" aria-expanded={alertsOpen} onClick={() => setAlertsOpen((v) => !v)}>
+          Alerts
+          <span className="num rounded-full min-w-6 h-6 px-1.5 grid place-items-center text-[12px]"
+            style={lastLevel ? { background: lastLevel.bg, color: lastLevel.fg } : { background: 'rgb(255 255 255 / .1)' }}>{alerts.length}</span>
+        </button>
       </div>
 
-      <RiskPanel model={model} cur={cur} day={day} archive={archive} glacier={glacier} gYear={gYear} />
-      <Timeline model={model} state={replay.state} day={day} controls={replay} />
-      <Notifications alerts={alerts} system={system} opKey={opKey} onOpKey={setOpKey} onDecide={decide} error={err} />
+      {frame && (
+        <p className="absolute z-10 left-1/2 -translate-x-1/2 bottom-[104px] text-[12px] text-muted pointer-events-none max-[1100px]:hidden">
+          Satellite image of {fmtDate(frame.date)}
+        </p>
+      )}
+
+      <Timeline model={model} state={replay.state} day={day} controls={replay} speed={speed} setSpeed={setSpeed} autopilot={autopilot}
+        onCompare={() => setCompare(true)} canCompare={archive.has_ice_layer} />
+      {alertsOpen && (
+        <AlertsSheet alerts={alerts} system={system} opKey={opKey} onOpKey={setOpKey} onDecide={decide} error={err}
+          onClose={() => setAlertsOpen(false)} autopilot={autopilot} setAutopilot={setAutopilot} started={started} />
+      )}
       <Toast alert={toast} />
       {compare && glacier && <GlacierCompare lake={lakeMeta} glacier={glacier} model={model} onClose={() => setCompare(false)} />}
+      {compare && !glacier && (
+        <div className="absolute inset-0 z-40 grid place-items-center bg-void/80"><p className="text-muted">{ice.error ? ice.error.message : 'Loading glacier layer...'}</p></div>
+      )}
     </>
   )
 }

@@ -117,7 +117,7 @@ export default function StatusPanel({ mode, lake, sim, telemetry, series, layers
   const flags = mode === 'replay' ? sim?.flags : liveTrend === 'UNRELIABLE' ? ['Trend looks implausible; treated as a data artefact, not growth'] : []
 
   return (
-    <aside className="panel absolute z-10 left-3 top-[60px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4">
+    <aside className="panel absolute z-10 left-3 top-[72px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4">
       <div className="panel-title">{lake.name} <span className="font-normal normal-case tracking-normal">· {lake.country}</span></div>
       <div className="mt-2 flex items-center gap-2">
         <LevelBadge level={level} big />
