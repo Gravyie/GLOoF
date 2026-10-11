@@ -287,8 +287,9 @@ pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
 stage "Real SMS drill"
-say "Off: the site works, alerts are practice only. On: an operator-approved EVACUATE in"
-say "Flood night sends ONE real drill SMS to the phones above (once per re-arm)."
+say "Off: the site works, alerts are practice only. On: when the History replay reaches"
+say "Warning (Oct 2023), ONE real drill SMS goes to the phones above, automatically, once per run."
+warn "While on, anyone pressing Play on the public site can trigger it (5-minute cooldown, spend cap)."
 if confirm "Turn the real SMS drill ON for this deploy?"; then DRILL=true; else DRILL=false; fi
 write_env DRILL "$DRILL"
 [[ "$DRILL" == true ]] && DRY=false || DRY=true
@@ -347,8 +348,8 @@ say ""
 say "Left to do by hand:"
 step "Open each inbox and click the AWS SNS 'Confirm subscription' link (expires in 3 days)."
 if [[ "$DRILL" == true ]]; then
-  step "In Flood night: paste the operator key, Send test, then Re-arm drill."
-  step "Untick auto-approve, start the replay, approve EVACUATE: the phones get one SMS."
+  step "Open the site, press Play in History: at Warning (Oct 2023) the phones get one SMS."
+  step "Optional first: Flood night -> paste the operator key -> Send test."
 else
   step "Drill is OFF. To enable it later: ./setup.sh again and answer yes at stage 5."
 fi

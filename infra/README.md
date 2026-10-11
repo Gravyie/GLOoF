@@ -152,27 +152,35 @@ Docker must be running.
 
 ## Demo runbook: one real SMS drill
 
+The real SMS is triggered by the **History** (10-year) replay. When the playhead reaches **Warning**, the highest level
+the real South Lhonak record reaches (24 Oct 2023, the first clear image after the outburst), one drill SMS goes to every
+registered phone automatically, with no approval step. Flood night stays practice only.
+
 1. **Deploy** and open the site URL.
 2. **Confirm** the email subscriptions from each inbox.
 3. **Turn the drill on:** in `terraform.tfvars` set `alert_dry_run = false`, `sim_live_sms = true`,
-   `demo_sms_live = true`, then re-run `./deploy.sh`. The Flood night panel then reads
-   "Live alert via SNS (account ...XXXX, us-east-1)".
-4. **Get the operator key:**
-   `aws secretsmanager get-secret-value --secret-id glof/alert-api-key --query SecretString --output text --profile main`
-5. **Send test.** In Flood night, enter the key and press **Send test**. One `DRILL - TEST ONLY` message goes out, and the
-   panel shows its MessageId as "accepted by SNS".
-6. **Re-arm.** Press **Re-arm drill** so the latch is armed for the real run.
-7. **Run Flood night** with **auto-approve off**. At EVACUATE, the public alert waits for approval.
-8. **Approve EVACUATE.** Exactly one drill publish goes out: the 5 phones get the short SMS and subscribers get the
-   bilingual email. Refreshing, seeking, resetting or restarting will not send again; only **Re-arm drill** allows
-   another.
-9. **Turn the gates off again** (step 3 reversed) after the demo.
+   `demo_sms_live = true`, then re-run `./deploy.sh` (or answer yes at stage 5 of `./setup.sh`). The Alerts panel then
+   reads "Live alert via SNS (account ...XXXX, us-east-1)".
+4. **Optional test:** in Flood night, enter the operator key and press **Send test** to send one `DRILL - TEST ONLY`
+   message. Get the key with
+   `aws secretsmanager get-secret-value --secret-id glof/alert-api-key --query SecretString --output text --profile main`.
+5. **Press Play in History.** When the replay reaches Warning in October 2023, the phones get the SMS, a notice reads
+   "real SMS accepted by Amazon SNS", and the Alerts panel shows the MessageId and time.
+6. **Rules that keep it to one message:**
+   - one SMS per run;
+   - a new run (Back to start, then Play) can send again, but only after a 5-minute cooldown
+     (`drill_cooldown_seconds`);
+   - refreshing the page, seeking back and forth, or restarting the server mid-run never resends.
+7. **Turn the gates off again** (step 3 reversed) after the demo.
+
+The site is public, so while the drill is on, anyone who presses Play can trigger the SMS (limited by the per-run rule,
+the cooldown and the monthly spend cap). Turn it off when the demo is over.
 
 What the messages look like:
 
-- **SMS** (114 GSM-7 characters):
-  `DRILL - TEST ONLY: EVACUATE - South Lhonak Lake` / `Move to high ground away from the river. Follow official guidance.`
-- **Email:** prefixed `DRILL - TEST ONLY`, with the full English and Hindi evacuation message.
+- **SMS** (98 GSM-7 characters):
+  `DRILL - TEST ONLY: WARNING - South Lhonak Lake` / `Keep away from the river. Follow official guidance.`
+- **Email:** prefixed `DRILL - TEST ONLY`, with the full English and Hindi warning message.
 
 ## Fallback: Terraform cannot reach the SMS account
 

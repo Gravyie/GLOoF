@@ -80,6 +80,14 @@ class AlertDispatcher:
                  meta: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         out = []
         for audience, message in self._plan(lake, level, reasons):
+            if (source == "archive" and audience == "public" and level == self._s.drill_trigger_level
+                    and self._s.drill_live):
+                # Demo drill: the History replay reaching the trigger level sends one real
+                # SMS automatically, no approval (latched once per run, with a cooldown).
+                out.append(self._log.add(
+                    lake=lake.id, level=level, audience=audience, audience_label=AUDIENCE_LABEL[audience],
+                    message=message, source=source, sim_h=sim_h, **self._auto_drill(lake, level), **(meta or {})))
+                continue
             needs_approval = audience == "public" and not autopilot
             if needs_approval:
                 status, ids, n = "pending_approval", [], len(self._phones(audience)) or DEMO_RECIPIENTS[audience]
@@ -97,38 +105,31 @@ class AlertDispatcher:
         return "SMS via AWS SNS"
 
     def approve(self, alert_id: int, approver: str, live: bool = False) -> dict[str, Any] | None:
-        """Operator approval of a pending public alert.
-
-        The only route from a simulation to a real phone is the demo drill: an
-        EVACUATE public alert from the Outburst night sim, with all three gates
-        set, consuming the persisted latch. Everything else stays simulated.
-        """
         rec = self._log.get(alert_id)
         if not rec or rec["status"] != "pending_approval":
             return None
         from src.core.config import LAKES
 
-        lake = LAKES.get(rec["lake"])
-        if rec.get("source") == "simulation" and rec["level"] == "EVACUATE" and rec["audience"] == "public":
-            return self._approve_drill(rec, approver, lake)
-        status, ids, n = self._deliver(rec["audience"], rec["message"], live, level=rec["level"], lake=lake)
+        status, ids, n = self._deliver(rec["audience"], rec["message"], live, level=rec["level"],
+                                       lake=LAKES.get(rec["lake"]))
         return self._log.update(alert_id, status=status, message_ids=ids, recipients=n, approved_by=approver)
 
-    def _approve_drill(self, rec: dict[str, Any], approver: str, lake: Lake | None) -> dict[str, Any] | None:
-        base = {"approved_by": approver}
-        if not self._s.drill_live or self._latch is None:
-            return self._log.update(rec["id"], status="simulated", note="practice mode: real SMS needs all three gates", **base)
-        if not self._latch.consume():
-            return self._log.update(rec["id"], status="simulated", note="drill already sent; re-arm to send again", **base)
+    def _auto_drill(self, lake: Lake, level: str) -> dict[str, Any]:
+        """Fields for the alert record of an automatic drill attempt."""
+        base = {"recipients": 0, "message_ids": [], "channel": self.drill_channel()}
+        if self._latch is None:
+            return {**base, "status": "simulated", "live": False, "note": "no latch configured"}
+        ok, why = self._latch.consume(self._s.drill_cooldown_seconds)
+        if not ok:
+            return {**base, "status": "simulated", "live": False, "note": f"real SMS not sent: {why}"}
         try:
-            mid = self.send_drill(lake, "EVACUATE")
-        except Exception as exc:  # nothing went out: give the arming back so the operator can retry
+            mid = self.send_drill(lake, level)
+        except Exception as exc:  # nothing went out: give the arming back
             log.error("drill publish failed: %s", exc)
-            self._latch.rearm()
-            return self._log.update(rec["id"], status="failed", note=str(exc)[:200], **base)
+            self._latch.give_back()
+            return {**base, "status": "failed", "live": True, "note": str(exc)[:200]}
         self._latch.record(mid)
-        return self._log.update(rec["id"], status="sent", message_ids=[mid], accepted_at=_utcnow(),
-                                channel=self.drill_channel(), live=True, recipients=1, **base)
+        return {**base, "status": "sent", "recipients": 1, "message_ids": [mid], "live": True, "accepted_at": _utcnow()}
 
     def send_drill(self, lake: Lake | None, level: str) -> str:
         """One real drill publish (callers check the gates). Returns the SNS MessageId."""

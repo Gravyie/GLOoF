@@ -131,8 +131,8 @@ def alerts(request: Request, lake: str | None = None, after_id: int = 0):
 def approve_alert(alert_id: int, request: Request, x_api_key: str | None = Header(default=None)):
     _require_operator(request, x_api_key)
     st = request.app.state
-    # live=False: approval never sends for real except the latched EVACUATE drill,
-    # which the dispatcher gates on its own (three flags + latch).
+    # live=False: approval never sends for real. The only real send is the automatic
+    # History-replay drill, which the dispatcher gates on its own (three flags + latch).
     rec = st.dispatcher.approve(alert_id, "operator", live=False)
     if rec is None:
         raise HTTPException(404, "no pending alert with that id")
@@ -286,7 +286,8 @@ def system(request: Request):
     acct = topic_account(s.sns_topic_arn)
     region = topic_region(s.sns_topic_arn)
     if s.drill_live:
-        sns = {"mode": "live", "label": f"Live alert via SNS (account ...{acct[-4:]}, {region})"}
+        sns = {"mode": "live", "label": f"Live alert via SNS (account ...{acct[-4:]}, {region})",
+               "trigger": f"History replay reaching {s.drill_trigger_level}, once per run"}
     else:
         missing = [n for n, ok in (("ALERT_DRY_RUN=false", not s.alert_dry_run), ("SIM_LIVE_SMS=true", s.sim_live_sms),
                                    ("DEMO_SMS_LIVE=true", s.demo_sms_live), ("SNS_TOPIC_ARN", bool(s.sns_topic_arn))) if not ok]
@@ -306,7 +307,7 @@ def system(request: Request):
 
 @router.post("/demo-sms/rearm")
 def demo_sms_rearm(request: Request, x_api_key: str | None = Header(default=None)):
-    """Allow exactly one more real drill SMS. The only way to re-arm."""
+    """Arm the drill again without restarting the replay (the cooldown still applies)."""
     _require_operator(request, x_api_key)
     return request.app.state.latch.rearm()
 

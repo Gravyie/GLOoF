@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     # Third gate for the demo drill: a real SNS publish from the app needs
     # ALERT_DRY_RUN=false AND SIM_LIVE_SMS=true AND DEMO_SMS_LIVE=true.
     demo_sms_live: bool = False
+    # The History (10-year) replay sends ONE real drill SMS when it first reaches this level.
+    # WARNING is the highest level the real South Lhonak record reaches (24 Oct 2023).
+    drill_trigger_level: str = "WARNING"
+    # Minimum time between two real drill SMS (stops rapid restarts burning the spend cap).
+    drill_cooldown_seconds: int = 300
     # The scheduled Lambda only notifies for real when this is true (off by default,
     # so a fresh deployment can never text anyone on its own).
     lambda_live_alerts: bool = False

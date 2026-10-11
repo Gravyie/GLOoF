@@ -53,8 +53,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.alert_log = make_alert_log(settings)
     app.state.latch = make_latch(settings)
     app.state.dispatcher = AlertDispatcher(settings, app.state.alerts, app.state.alert_log, app.state.latch)
-    # Replays never deliver for real on their own: the only route from a sim to a
-    # phone is the operator-approved EVACUATE drill (latch, three gates).
+    # Replays deliver through the dispatcher as "simulated". The one exception is the
+    # demo drill: the History replay reaching DRILL_TRIGGER_LEVEL sends one real SMS
+    # (three gates, latched once per run, cooldown).
     app.state.sim = SimulationRunner(LAKES["south_lhonak"], app.state.dispatcher, live_sms=False)
 
     # Boundary archive (local JSON or S3) -> risk timeline -> server-side replay.
@@ -84,7 +85,8 @@ def load_archives(app: FastAPI) -> list[str]:
             st.replays[lake.id].load(timeline)
         else:
             st.replays[lake.id] = HistoryReplay(lake, timeline, st.dispatcher, live=False,
-                                                duration_s=st.settings.replay_duration_s)
+                                                duration_s=st.settings.replay_duration_s,
+                                                on_new_run=st.latch.rearm)
         loaded.append(lake.id)
     return loaded
 

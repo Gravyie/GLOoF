@@ -287,7 +287,7 @@ function Legend({ layers, setLayers, glacier, gYear, ice, hasIce, baselineLabel 
 /* ------------------------------------------------------------------ alerts sheet */
 const STATUS = {
   simulated: { text: 'Simulated', cls: 'text-[#aeb6c0]' },
-  sent: { text: 'Sent by Amazon SNS', cls: 'text-[#7fdb9a]' },
+  sent: { text: 'Real SMS accepted by Amazon SNS', cls: 'text-[#7fdb9a]' },
   pending_approval: { text: 'Waiting for approval', cls: 'text-[#f5d06b]' },
   rejected: { text: 'Rejected', cls: 'text-[#aeb6c0]' },
   failed: { text: 'Delivery failed', cls: 'text-[#ff8a80]' },
@@ -304,8 +304,14 @@ function AlertsSheet({ alerts, system, opKey, onOpKey, onDecide, error, onClose,
           <div>
             <h2 className="text-[17px] font-semibold">Alerts</h2>
             <p className={`text-[13px] mt-1 ${live ? 'text-[#7fdb9a]' : 'text-muted'}`}>
-              {live ? 'Live: messages go out through Amazon SNS.' : 'Practice mode: messages are prepared but not sent.'}
+              {live ? system.sns.label : 'Practice mode: messages are prepared but not sent.'}
             </p>
+            {live && (
+              <p className="text-[13px] mt-1 text-muted">
+                When the replay reaches Warning, one real drill SMS goes to the registered phones automatically, once per run.
+                {system.demo_sms && !system.demo_sms.armed && system.demo_sms.sent_at ? ` Last sent ${new Date(system.demo_sms.sent_at).toLocaleTimeString()}.` : ''}
+              </p>
+            )}
           </div>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
@@ -342,9 +348,10 @@ function AlertsSheet({ alerts, system, opKey, onOpKey, onDecide, error, onClose,
                   <span className="text-muted ml-auto">{a.date ? fmtMonth(a.date) : ''}</span>
                 </div>
                 <p className="mt-1.5 text-[13px] leading-snug text-[#c5ccd4] line-clamp-3">{a.message}</p>
-                <div className="flex items-center gap-3 mt-1.5 text-[12px]">
+                <div className="flex items-center gap-3 mt-1.5 text-[12px] flex-wrap">
                   <span className={stt.cls}>{stt.text}</span>
-                  {a.message_ids?.[0] && <span className="num text-muted" title={a.message_ids.join(', ')}>id {a.message_ids[0].slice(0, 8)}</span>}
+                  {a.message_ids?.[0] && <span className="num text-muted" title={a.message_ids.join(', ')}>MessageId {a.message_ids[0]}</span>}
+                  {a.accepted_at && <span className="text-muted">{new Date(a.accepted_at).toLocaleTimeString()}</span>}
                   {a.status === 'pending_approval' && (
                     <span className="ml-auto flex gap-2">
                       <button className="btn btn-primary py-0.5 text-xs" disabled={!opKey} onClick={() => onDecide(a.id, 'approve')}>Approve</button>
@@ -352,6 +359,7 @@ function AlertsSheet({ alerts, system, opKey, onOpKey, onDecide, error, onClose,
                     </span>
                   )}
                 </div>
+                {a.note && <p className="mt-1 text-[12px] text-muted">{a.note}</p>}
               </li>
             )
           })}
@@ -425,7 +433,7 @@ function Toast({ alert }) {
   return (
     <div key={alert.id} className="slide-in absolute z-20 top-[72px] left-1/2 -translate-x-1/2 rounded-xl px-4 py-2.5 shadow-2xl text-[13px]"
       style={{ background: st.bg, color: st.fg, border: `1px solid ${st.dot}` }} role="status">
-      <b className="font-semibold">{st.label}</b>: {alert.audience_label.toLowerCase()} notified{alert.date ? `, ${fmtMonth(alert.date)}` : ''}
+      <b className="font-semibold">{st.label}</b>: {alert.status === 'sent' ? 'real SMS accepted by Amazon SNS' : `${alert.audience_label.toLowerCase()} notified`}{alert.date ? `, ${fmtMonth(alert.date)}` : ''}
     </div>
   )
 }

@@ -30,7 +30,7 @@ function Phone({ alert }) {
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }) : '')
 
 /** Real-delivery controls for the drill: mode, latch, Send test, Re-arm. */
-function DrillPanel({ system, opKey, onOpKey, reloadSystem, autopilot }) {
+function DrillPanel({ system, opKey, onOpKey, reloadSystem }) {
   const [busy, setBusy] = useState(null)
   const [msg, setMsg] = useState(null)
   const sns = system?.sns
@@ -42,20 +42,19 @@ function DrillPanel({ system, opKey, onOpKey, reloadSystem, autopilot }) {
       const r = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'X-API-Key': opKey } })
       const body = await r.json()
       if (!r.ok) throw new Error(body.detail ?? `HTTP ${r.status}`)
-      setMsg(label === 'test' ? { ok: true, text: `Test accepted by SNS: ${body.message_id} at ${fmtTime(body.accepted_at)}` } : { ok: true, text: 'Drill re-armed: the next approved EVACUATE sends one real SMS.' })
+      setMsg(label === 'test' ? { ok: true, text: `Test accepted by SNS: ${body.message_id} at ${fmtTime(body.accepted_at)}` } : { ok: true, text: 'Drill re-armed: the History replay can send one more real SMS (cooldown still applies).' })
       reloadSystem?.()
     } catch (e) { setMsg({ ok: false, text: e.message }) } finally { setBusy(null) }
   }
   return (
     <div className="rounded-lg border border-white/[.07] p-3 mb-4 text-[12px] space-y-2">
       <div className={live ? 'text-[#7fdb9a] font-medium' : 'text-muted'}>{sns ? sns.label : 'Checking alert mode...'}</div>
-      {live && latch && (
+      {live && (
         <div className="text-muted">
-          {latch.armed ? 'Drill armed: the next approved EVACUATE sends one real SMS and email.'
-            : `Drill sent ${fmtTime(latch.sent_at)}${latch.message_id ? `, accepted by SNS as ${latch.message_id}` : ''}. Re-arm to send again.`}
+          Real SMS trigger: {sns.trigger ?? 'History replay'}. This replay stays practice only.
+          {latch?.sent_at ? ` Last drill SMS ${fmtTime(latch.sent_at)}${latch.message_id ? `, accepted by SNS as ${latch.message_id}` : ''}.` : ''}
         </div>
       )}
-      {live && autopilot && <div className="text-[#f5d06b]">Real SMS needs operator approval: untick auto-approve before starting.</div>}
       <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key"
         aria-label="Operator key" className="field w-full" autoComplete="off" />
       <div className="flex gap-2">
@@ -67,7 +66,7 @@ function DrillPanel({ system, opKey, onOpKey, reloadSystem, autopilot }) {
   )
 }
 
-export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey, error, system, reloadSystem, autopilot }) {
+export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey, error, system, reloadSystem }) {
   const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && a.status !== 'pending_approval' && a.status !== 'rejected')
   const list = [...alerts].reverse()
   const sentCount = alerts.filter((a) => a.status === 'sent').length
@@ -75,7 +74,7 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
   return (
     <aside className="panel absolute z-10 right-3 top-[72px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
       <div className="panel-title mb-2">Real alerts</div>
-      <DrillPanel system={system} opKey={opKey} onOpKey={onOpKey} reloadSystem={reloadSystem} autopilot={autopilot} />
+      <DrillPanel system={system} opKey={opKey} onOpKey={onOpKey} reloadSystem={reloadSystem} />
       <div className="panel-title mb-2">Public alert, as received</div>
       <Phone alert={latestPublic} />
 

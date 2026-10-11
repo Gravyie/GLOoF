@@ -93,7 +93,7 @@ export default function App() {
       {mode === 'replay' ? (
         <>
           <Timeline sim={sim.state} controls={sim} />
-          <AlertFeed alerts={sim.alerts} opKey={opKey} onOpKey={setOpKey} error={feedError} system={system.data} reloadSystem={system.reload} autopilot={sim.state?.autopilot}
+          <AlertFeed alerts={sim.alerts} opKey={opKey} onOpKey={setOpKey} error={feedError} system={system.data} reloadSystem={system.reload}
             onApprove={(id) => decide(id, 'approve')} onReject={(id) => decide(id, 'reject')} />
         </>
       ) : <ManualAlert lake={lake} />}

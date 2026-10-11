@@ -32,8 +32,9 @@ def _ord(s: str) -> int:
 
 class HistoryReplay:
     def __init__(self, lake: Lake, timeline: dict[str, Any], dispatcher: AlertDispatcher, *,
-                 live: bool = False, duration_s: float = 90.0) -> None:
+                 live: bool = False, duration_s: float = 90.0, on_new_run: Any = None) -> None:
         self._lake, self._disp, self._live = lake, dispatcher, live
+        self._on_new_run = on_new_run  # called when a run starts from the beginning (arms the drill SMS)
         self._lock = threading.Lock()
         self.load(timeline, duration_s)
 
@@ -73,6 +74,8 @@ class HistoryReplay:
                 self._elapsed, self._passed = 0.0, 0
                 self._disp._log.clear(source=SOURCE)  # noqa: SLF001
             if not self._running:
+                if self._elapsed == 0 and self._on_new_run:
+                    self._on_new_run()
                 self._running, self._t0 = True, time.monotonic()
 
     def pause(self) -> None:

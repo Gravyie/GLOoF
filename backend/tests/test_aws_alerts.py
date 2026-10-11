@@ -43,6 +43,22 @@ def app_with_fake(settings):
     return app, fake
 
 
+R = "/api/archive/replay"
+Q = "?lake=south_lhonak"
+
+
+def run_history(client):
+    """Start a fresh History run and play it through to the end (passes the 2023 Warning)."""
+    client.post(f"{R}/reset{Q}")
+    client.post(f"{R}/start{Q}&speed=1")
+    client.post(f"{R}/seek{Q}&progress=1")
+    return client.get(f"{R}/state{Q}").json()["alerts"]
+
+
+def public_warning(alerts):
+    return next(a for a in alerts if a["audience"] == "public" and a["level"] == "WARNING")
+
+
 def pending_evacuate(app):
     """What the Outburst night sim records at EVACUATE with auto-approve off."""
     recs = app.state.dispatcher.dispatch(LAKES["south_lhonak"], "EVACUATE", [{"level": "EVACUATE", "text": "test"}],
@@ -72,56 +88,65 @@ def test_drill_email_is_prefixed_and_bilingual():
 def test_gates_off_sends_nothing(tmp_path):
     app, fake = app_with_fake(live_settings(tmp_path, demo_sms_live=False))
     client = TestClient(app)
-    rec = client.post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
-    assert rec["status"] == "simulated" and fake.calls == []
+    w = public_warning(run_history(client))
+    assert w["status"] == "simulated" and fake.calls == []
     assert client.post("/api/notify/test", headers=KEY).status_code == 409 and fake.calls == []
     assert client.get("/api/system").json()["sns"]["mode"] == "simulated"
 
 
-def test_latch_sends_once_across_refresh_seek_reset_and_restart(tmp_path):
-    s = live_settings(tmp_path)
-    app, fake = app_with_fake(s)
+def test_history_warning_sends_one_sms_automatically(tmp_path):
+    app, fake = app_with_fake(live_settings(tmp_path))
     client = TestClient(app)
-
-    first = client.post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
-    assert first["status"] == "sent" and first["message_ids"] == ["msg-1"] and first["accepted_at"]
+    alerts = run_history(client)
+    w = public_warning(alerts)
+    assert w["status"] == "sent" and w["message_ids"] == ["msg-1"] and w["accepted_at"] and "us-east-1" in w["channel"]
+    assert len(fake.calls) == 1  # only the Warning public alert is real; Watch/Advisory/officials stay simulated
+    assert all(a["status"] == "simulated" for a in alerts if a is not w and a["id"] != w["id"])
     call = fake.calls[0]
     assert call["TopicArn"] == TOPIC and call["MessageStructure"] == "json"
     assert call["MessageAttributes"]["AWS.SNS.SMS.SMSType"]["StringValue"] == "Transactional"
     body = json.loads(call["Message"])
-    assert set(body) == {"default", "sms", "email"} and body["sms"].startswith(f"{DRILL_PREFIX}:")
+    assert set(body) == {"default", "sms", "email"} and body["sms"].startswith("DRILL - TEST ONLY: WARNING")
 
-    # refresh + seek + reset: the sim records a new pending EVACUATE; approving it must not resend
-    client.get("/api/sim/state")
-    client.post("/api/sim/reset")
-    again = client.post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
-    assert again["status"] == "simulated" and "already sent" in again["note"] and len(fake.calls) == 1
-    assert client.get("/api/system").json()["demo_sms"]["armed"] is False
 
-    # restart: a new process on the same data dir
+def test_no_resend_on_refresh_seek_or_restart(tmp_path):
+    s = live_settings(tmp_path)
+    app, fake = app_with_fake(s)
+    client = TestClient(app)
+    run_history(client)
+    assert len(fake.calls) == 1
+    # refresh (polling) and seeking back then forward again: same run, no resend
+    client.get(f"{R}/state{Q}")
+    client.post(f"{R}/seek{Q}&progress=0")
+    client.post(f"{R}/seek{Q}&progress=1")
+    w = public_warning(client.get(f"{R}/state{Q}").json()["alerts"])
+    assert w["status"] == "simulated" and "already sent" in w["note"] and len(fake.calls) == 1
+    # server restart: new process, same persisted latch; replaying without a new run sends nothing
     app2, fake2 = app_with_fake(s)
     c2 = TestClient(app2)
-    r = c2.post(f"/api/alerts/{pending_evacuate(app2)}/approve", headers=KEY).json()
-    assert r["status"] == "simulated" and fake2.calls == []
-
-    # only an operator re-arm allows another send
-    assert c2.post("/api/demo-sms/rearm").status_code == 401
-    assert c2.post("/api/demo-sms/rearm", headers=KEY).json()["armed"] is True
-    r = c2.post(f"/api/alerts/{pending_evacuate(app2)}/approve", headers=KEY).json()
-    assert r["status"] == "sent" and len(fake2.calls) == 1
+    c2.post(f"{R}/seek{Q}&progress=1")
+    assert fake2.calls == []
 
 
-def test_only_evacuate_drill_is_real(tmp_path):
+def test_new_run_sends_again_only_after_cooldown(tmp_path):
+    app, fake = app_with_fake(live_settings(tmp_path, drill_cooldown_seconds=300))
+    client = TestClient(app)
+    run_history(client)
+    w = public_warning(run_history(client))  # a new run straight away
+    assert w["status"] == "simulated" and "cooldown" in w["note"] and len(fake.calls) == 1
+
+    app2, fake2 = app_with_fake(live_settings(tmp_path / "b", drill_cooldown_seconds=0))
+    c2 = TestClient(app2)
+    run_history(c2)
+    run_history(c2)
+    assert len(fake2.calls) == 2  # no cooldown: one SMS per run
+
+
+def test_flood_night_never_sends_for_real(tmp_path):
     app, fake = app_with_fake(live_settings(tmp_path))
     client = TestClient(app)
-    recs = app.state.dispatcher.dispatch(LAKES["south_lhonak"], "WARNING", [], source="simulation", autopilot=False)
-    pid = next(r["id"] for r in recs if r["audience"] == "public")
-    assert client.post(f"/api/alerts/{pid}/approve", headers=KEY).json()["status"] == "simulated"
-    # history replay with every gate on: still simulated
-    client.post("/api/archive/replay/seek?lake=south_lhonak&progress=1")
-    alerts = client.get("/api/archive/replay/state?lake=south_lhonak").json()["alerts"]
-    assert alerts and all(a["status"] == "simulated" for a in alerts)
-    assert fake.calls == []
+    rec = client.post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
+    assert rec["status"] == "simulated" and fake.calls == []
 
 
 def test_send_test_and_system_report(tmp_path):
@@ -132,7 +157,7 @@ def test_send_test_and_system_report(tmp_path):
     assert json.loads(fake.calls[0]["Message"])["sms"].startswith("DRILL - TEST ONLY: TEST")
     sysinfo = client.get("/api/system").json()
     assert sysinfo["sns"]["mode"] == "live" and sysinfo["sns"]["topic_account"] == "...4444"
-    assert sysinfo["sns"]["region"] == "us-east-1" and "us-east-1" in sysinfo["sns"]["label"]
+    assert sysinfo["sns"]["region"] == "us-east-1" and "WARNING" in sysinfo["sns"]["trigger"]
 
 
 def test_failed_publish_gives_the_arming_back(tmp_path):
@@ -144,8 +169,8 @@ def test_failed_publish_gives_the_arming_back(tmp_path):
             raise ClientError({"Error": {"Code": "AuthorizationError", "Message": "no"}}, "Publish")
 
     app.state.alerts._client = Broken()  # noqa: SLF001
-    r = TestClient(app).post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
-    assert r["status"] == "failed" and app.state.latch.state()["armed"] is True
+    w = public_warning(run_history(TestClient(app)))
+    assert w["status"] == "failed" and app.state.latch.state()["armed"] is True
 
 
 # --------------------------------------------------------------------------- DynamoDB backends
@@ -160,15 +185,23 @@ class FakeTable:
 
         cur = self.items.setdefault(Key["pk"], dict(Key))
         v = ExpressionAttributeValues
-        if ConditionExpression and not ("armed" not in cur or cur["armed"] == v[":tr"]):
-            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
+        if ConditionExpression:
+            armed_ok = "armed" not in cur or cur["armed"] == v[":tr"]
+            cool_ok = "sent_epoch" not in cur or cur["sent_epoch"] < v[":cut"]
+            if not (armed_ok and cool_ok):
+                raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
         if UpdateExpression.startswith("ADD n"):
             cur["n"] = cur.get("n", 0) + v[":one"]
         elif "armed = :f" in UpdateExpression:
-            cur.update(armed=v[":f"], sent_at=v[":t"])
+            cur.update(armed=v[":f"], sent_at=v[":t"], sent_epoch=v[":e"])
             cur.pop("message_id", None)
         elif "message_id = :m" in UpdateExpression:
             cur["message_id"] = v[":m"]
+        elif UpdateExpression.startswith("SET armed = :tr"):
+            cur["armed"] = True
+            if "REMOVE" in UpdateExpression:
+                cur.pop("sent_at", None)
+                cur.pop("sent_epoch", None)
         return {"Attributes": dict(cur)}
 
     def put_item(self, Item):
@@ -197,8 +230,14 @@ def test_dynamo_alert_log_and_latch():
 
     latch = DynamoLatch(t)
     assert latch.state()["armed"] is True
-    assert latch.consume() is True and latch.consume() is False
+    assert latch.consume(300)[0] is True
+    ok, why = latch.consume(300)
+    assert not ok and "already sent" in why
     latch.record("msg-9")
     assert latch.state()["message_id"] == "msg-9"
     latch.rearm()
-    assert latch.consume() is True
+    ok, why = latch.consume(300)
+    assert not ok and "cooldown" in why  # armed again, but inside the cooldown
+    assert latch.consume(0)[0] is True
+    latch.give_back()
+    assert latch.state()["armed"] is True and latch.state()["sent_epoch"] is None
