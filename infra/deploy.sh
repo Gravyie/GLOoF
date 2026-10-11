@@ -44,7 +44,12 @@ echo "   main account $MAIN_ID, SMS account $SMS_ID, $(wc -w <<<"$NUMBERS" | tr 
 
 # ---------------------------------------------------------------- 1-2. images
 echo "== registries"
-$tf apply -input=false -auto-approve -target=module.main.aws_ecr_repository.ingest -target=module.main.aws_ecr_repository.api >/dev/null
+# First deploy only: create the registries so there is somewhere to push images.
+# Skipped once they exist: a targeted apply can conflict with Terraform's automatic
+# address moves (e.g. after toggling enable_cloudfront).
+if ! $tf state list 2>/dev/null | grep -q 'module.main.aws_ecr_repository.api$'; then
+  $tf apply -input=false -auto-approve -target=module.main.aws_ecr_repository.ingest -target=module.main.aws_ecr_repository.api >/dev/null
+fi
 ECR_INGEST="$($tf output -raw ecr_ingest)"
 ECR_API="$($tf output -raw ecr_api)"
 aws ecr get-login-password --region "$MAIN_REGION" --profile "$MAIN_PROFILE" \
