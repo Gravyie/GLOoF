@@ -49,3 +49,8 @@ infra/terraform/*.tfstate*
 infra/terraform/terraform.tfvars
 backend/archive/.raw_*.json
 backend/archive/.raw_ice/
+infra/**/.terraform/
+infra/**/.terraform.lock.hcl
+infra/**/terraform.tfvars
+infra/**/backend.hcl
+backend/data/

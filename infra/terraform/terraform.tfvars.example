@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Placeholders only here.
+main_profile             = "main"
+sms_profile              = "sms"
+main_region              = "ap-south-1"
+expected_main_account_id = "111111111111"
+expected_sms_account_id  = "222222222222"
+
+# Must already be "Verified" in the SNS SMS sandbox of the SMS account, us-east-1.
+demo_sms_numbers = ["+910000000000"]
+alert_emails     = ["you@example.com"]
+sms_spend_limit  = 1
+
+# Turn the demo drill on (all three) only when you are ready for phones to buzz.
+alert_dry_run = true
+sim_live_sms  = false
+demo_sms_live = false

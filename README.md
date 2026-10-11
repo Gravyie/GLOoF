@@ -238,6 +238,11 @@ All settings are environment variables (see `backend/.env.example` and `backend/
 
 ## AWS deployment
 
+Two AWS accounts, one Terraform stack: an SMS account holding only the SNS topic (us-east-1, sandbox-verified phones)
+and a main account holding everything else (CloudFront, ECS Fargate, ALB, Lambda, S3, DynamoDB, CloudWatch). The full
+guide, including the one-real-SMS drill runbook and a fallback split, is in **[infra/README.md](infra/README.md)**.
+The summary below describes the earlier single-account layout and is kept for reference.
+
 The `infra/` directory provisions the cloud side with Terraform.
 
 | Resource | Purpose |

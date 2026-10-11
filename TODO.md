@@ -23,12 +23,15 @@
 - [ ] Thresholds in `history.py` are round-number placeholders. Calibrate with the disaster-management authority.
 - [ ] Add operator "clear" for WARNING/EVACUATE in the archive replay (the tracker never steps down from those).
 
-## AWS
-- [ ] AWS credentials on the dev machine were invalid, so `infra/deploy.sh` has NOT been run.
-      `terraform validate` passes. Fix credentials, then: `cd infra && ./deploy.sh`.
-- [ ] Build and test the Lambda image locally against the Lambda Runtime Interface Emulator.
-- [ ] Persist the alert log (DynamoDB) instead of in-memory.
-- [ ] India SMS needs DLT registration; the SNS SMS sandbox only reaches verified numbers. Email works immediately.
+## AWS (Phase 3)
+- [ ] Not deployed yet. Before `infra/deploy.sh`: create the `main` and `sms` profiles (SNS-only IAM user in the SMS
+      account), run `infra/bootstrap-state.sh`, fill `infra/terraform/terraform.tfvars`, start Docker.
+- [ ] After deploy: confirm each email subscription; Indian numbers may need DLT registration for carriers to deliver.
+- [ ] Cross-region CloudWatch alarm actions were not confirmed either way in AWS docs; alarms use an EventBridge relay
+      Lambda. If direct actions turn out to work, the relay could be dropped.
+- [ ] Lambda real alerts are off (`lambda_live_alerts = false`); decide when to turn them on.
+- [ ] HTTPS between CloudFront and the ALB (needs a domain + ACM certificate); today the origin hop is HTTP inside AWS.
+- [ ] Build and test both images locally against the Lambda Runtime Interface Emulator / docker run.
 
 ## Frontend
 - [ ] Mobile layout (panels currently hidden below 1100px).

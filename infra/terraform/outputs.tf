@@ -1,0 +1,12 @@
+output "site_url" { value = module.main.site_url }
+output "alert_topic_arn" { value = module.sms.alert_topic_arn }
+output "archive_bucket" { value = module.main.archive_bucket }
+output "site_bucket" { value = module.main.site_bucket }
+output "distribution_id" { value = module.main.distribution_id }
+output "ecr_ingest" { value = module.main.ecr_ingest }
+output "ecr_api" { value = module.main.ecr_api }
+output "ingest_function" { value = module.main.ingest_function }
+output "ecs_cluster" { value = module.main.ecs_cluster }
+output "ecs_service" { value = module.main.ecs_service }
+output "api_key_secret" { value = module.main.api_key_secret }
+output "sms_account_id" { value = module.sms.sms_account_id }

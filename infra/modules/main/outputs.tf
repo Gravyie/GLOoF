@@ -1,0 +1,14 @@
+output "ingest_role_arn" { value = aws_iam_role.ingest.arn }
+output "task_role_arn" { value = aws_iam_role.ecs_task.arn }
+output "relay_role_arn" { value = aws_iam_role.relay.arn }
+output "archive_bucket" { value = aws_s3_bucket.archive.bucket }
+output "site_bucket" { value = aws_s3_bucket.site.bucket }
+output "ecr_ingest" { value = aws_ecr_repository.ingest.repository_url }
+output "ecr_api" { value = aws_ecr_repository.api.repository_url }
+output "distribution_id" { value = aws_cloudfront_distribution.site.id }
+output "site_url" { value = "https://${aws_cloudfront_distribution.site.domain_name}" }
+output "ingest_function" { value = aws_lambda_function.ingest.function_name }
+output "ecs_cluster" { value = aws_ecs_cluster.this.name }
+output "ecs_service" { value = aws_ecs_service.api.name }
+output "api_key_secret" { value = aws_secretsmanager_secret.api_key.name }
+output "alerts_table" { value = aws_dynamodb_table.alerts.name }

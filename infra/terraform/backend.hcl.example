@@ -1,0 +1,7 @@
+# Copy to backend.hcl (gitignored). Created once by infra/bootstrap-state.sh.
+bucket       = "glof-tfstate-111111111111"
+key          = "glof/terraform.tfstate"
+region       = "ap-south-1"
+profile      = "main"
+encrypt      = true
+use_lockfile = true # S3-native state locking (Terraform >= 1.10); no DynamoDB lock table
