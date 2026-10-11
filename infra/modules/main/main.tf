@@ -335,7 +335,10 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 # Without CloudFront (enable_cloudfront = false): the ALB is the public entry point.
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
-  description = var.enable_cloudfront ? "HTTP from CloudFront only" : "Public HTTP (no CloudFront)"
+  # Keep this constant: AWS cannot edit a security group's description, so changing it
+  # forces a replace, which fails while the ALB and the task still use the group.
+  # The ingress rule below is what actually changes with enable_cloudfront.
+  description = "HTTP from CloudFront only"
   vpc_id      = aws_vpc.this.id
   ingress {
     from_port       = 80
