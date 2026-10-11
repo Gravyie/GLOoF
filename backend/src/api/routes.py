@@ -131,8 +131,9 @@ def alerts(request: Request, lake: str | None = None, after_id: int = 0):
 def approve_alert(alert_id: int, request: Request, x_api_key: str | None = Header(default=None)):
     _require_operator(request, x_api_key)
     st = request.app.state
-    live = st.settings.sim_live_sms and not st.settings.alert_dry_run
-    rec = st.dispatcher.approve(alert_id, "operator", live)
+    # live=False: approval never sends for real except the latched EVACUATE drill,
+    # which the dispatcher gates on its own (three flags + latch).
+    rec = st.dispatcher.approve(alert_id, "operator", live=False)
     if rec is None:
         raise HTTPException(404, "no pending alert with that id")
     return rec
@@ -278,40 +279,51 @@ def archive_reload(request: Request, x_api_key: str | None = Header(default=None
 # --------------------------------------------------------------------------- #
 @router.get("/system")
 def system(request: Request):
+    from src.services.sns_service import topic_account, topic_region
+
     st = request.app.state
     s = st.settings
-    if s.sns_live and s.sns_topic_arn:
-        sns = {"mode": "live", "label": f"live: SNS topic {s.sns_topic_arn.rsplit(':', 1)[-1]}", "topic": s.sns_topic_arn}
-    elif s.sns_live and (s.phone_list or s.operator_phones or s.official_phones):
-        sns = {"mode": "live", "label": "live: SNS direct SMS", "topic": None}
+    acct = topic_account(s.sns_topic_arn)
+    region = topic_region(s.sns_topic_arn)
+    if s.drill_live:
+        sns = {"mode": "live", "label": f"Live alert via SNS (account ...{acct[-4:]}, {region})"}
     else:
-        why = "ALERT_DRY_RUN=true" if s.alert_dry_run else "SIM_LIVE_SMS=false" if not s.sim_live_sms else "no topic/recipients"
-        sns = {"mode": "simulated", "label": f"simulated delivery ({why})", "topic": s.sns_topic_arn}
+        missing = [n for n, ok in (("ALERT_DRY_RUN=false", not s.alert_dry_run), ("SIM_LIVE_SMS=true", s.sim_live_sms),
+                                   ("DEMO_SMS_LIVE=true", s.demo_sms_live), ("SNS_TOPIC_ARN", bool(s.sns_topic_arn))) if not ok]
+        sns = {"mode": "simulated", "label": f"Practice mode (needs {', '.join(missing)})"}
+    sns.update({"topic_account": f"...{acct[-4:]}" if acct else None, "region": region,
+                "gates": {"alert_dry_run": s.alert_dry_run, "sim_live_sms": s.sim_live_sms, "demo_sms_live": s.demo_sms_live}})
     return {
         "sns": sns,
+        "demo_sms": st.latch.state(),
         "archive": {"store": st.archive_store.describe, "lakes": {k: len(v["frames"]) for k, v in st.archives.items()}},
+        "alert_log": "dynamodb" if s.alerts_table else ("local file" if s.local_persistence else "memory"),
         "imagery": "Sentinel-2 L2A via AWS Earth Search (AWS Open Data)",
         "terrain": "Terrarium elevation tiles (AWS Open Data)",
         "operator_actions": bool(s.alert_api_key),
     }
 
 
+@router.post("/demo-sms/rearm")
+def demo_sms_rearm(request: Request, x_api_key: str | None = Header(default=None)):
+    """Allow exactly one more real drill SMS. The only way to re-arm."""
+    _require_operator(request, x_api_key)
+    return request.app.state.latch.rearm()
+
+
 @router.post("/notify/test")
 def notify_test(request: Request, x_api_key: str | None = Header(default=None)):
-    """Prove the SNS path end to end: verify the topic, then publish one test
-    message to operators. Refuses (409) rather than pretending when not live."""
+    """Publish one DRILL test message to the topic. Refuses (409) rather than
+    pretending when any of the three gates is off."""
     _require_operator(request, x_api_key)
     st = request.app.state
-    if not st.settings.sns_live or not st.settings.sns_topic_arn:
-        raise HTTPException(409, "SNS is in simulated mode: set SNS_TOPIC_ARN, SIM_LIVE_SMS=true, ALERT_DRY_RUN=false")
+    if not st.settings.drill_live:
+        raise HTTPException(409, "practice mode: set ALERT_DRY_RUN=false, SIM_LIVE_SMS=true, DEMO_SMS_LIVE=true and SNS_TOPIC_ARN")
     try:
-        info = st.alerts.verify_topic()
-        ids = st.alerts.publish_text(
-            "[GLOF TEST] Glacial Lake Monitor: notification path check. No action needed.",
-            topic=st.settings.sns_topic_arn, subject="[GLOF TEST] notification path check",
-            attributes={"audience": "operators", "level": "TEST", "lake": "all"})
-    except AlertError as exc:
-        raise HTTPException(502, str(exc))
-    except Exception as exc:  # botocore credential errors etc.
+        mid = st.dispatcher.send_drill(None, "TEST")
+    except Exception as exc:
         raise HTTPException(502, f"SNS publish failed: {exc}")
-    return {**info, "message_ids": ids}
+    from datetime import datetime, timezone
+
+    return {"message_id": mid, "status": "accepted by SNS", "accepted_at": datetime.now(timezone.utc).isoformat(),
+            "channel": st.dispatcher.drill_channel()}

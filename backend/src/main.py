@@ -12,7 +12,8 @@ from src.api.routes import router
 from src.core.cache import TTLStore
 from src.core.config import Settings, get_settings
 from src.core.config import LAKES
-from src.services.alert_log import AlertLog
+from src.services.alert_log import make_alert_log
+from src.services.demo_latch import make_latch
 from src.services.archive import make_store
 from src.services.history import analyse_archive
 from src.services.history_replay import HistoryReplay, Ticker
@@ -49,11 +50,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings, StacSceneFinder(settings), TTLStore(settings.cache_ttl_seconds)
     )
     app.state.alerts = SnsAlertService(settings)
-    app.state.alert_log = AlertLog()
-    app.state.dispatcher = AlertDispatcher(settings, app.state.alerts, app.state.alert_log)
-    # Simulation is dry-run unless SIM_LIVE_SMS=true AND ALERT_DRY_RUN=false.
-    live = settings.sns_live
-    app.state.sim = SimulationRunner(LAKES["south_lhonak"], app.state.dispatcher, live_sms=live)
+    app.state.alert_log = make_alert_log(settings)
+    app.state.latch = make_latch(settings)
+    app.state.dispatcher = AlertDispatcher(settings, app.state.alerts, app.state.alert_log, app.state.latch)
+    # Replays never deliver for real on their own: the only route from a sim to a
+    # phone is the operator-approved EVACUATE drill (latch, three gates).
+    app.state.sim = SimulationRunner(LAKES["south_lhonak"], app.state.dispatcher, live_sms=False)
 
     # Boundary archive (local JSON or S3) -> risk timeline -> server-side replay.
     app.state.archive_store = make_store(settings)
@@ -81,7 +83,7 @@ def load_archives(app: FastAPI) -> list[str]:
         if lake.id in st.replays:
             st.replays[lake.id].load(timeline)
         else:
-            st.replays[lake.id] = HistoryReplay(lake, timeline, st.dispatcher, live=st.settings.sns_live,
+            st.replays[lake.id] = HistoryReplay(lake, timeline, st.dispatcher, live=False,
                                                 duration_s=st.settings.replay_duration_s)
         loaded.append(lake.id)
     return loaded

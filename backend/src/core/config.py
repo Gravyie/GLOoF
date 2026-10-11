@@ -153,6 +153,18 @@ class Settings(BaseSettings):
     sim_live_sms: bool = False
     alert_api_key: str | None = None
     alert_dry_run: bool = True
+    # Third gate for the demo drill: a real SNS publish from the app needs
+    # ALERT_DRY_RUN=false AND SIM_LIVE_SMS=true AND DEMO_SMS_LIVE=true.
+    demo_sms_live: bool = False
+    # The scheduled Lambda only notifies for real when this is true (off by default,
+    # so a fresh deployment can never text anyone on its own).
+    lambda_live_alerts: bool = False
+    # DynamoDB table for the alert audit log + demo latch (AWS). Unset: local files under data_dir.
+    alerts_table: str | None = None
+    data_dir: str = "data"
+    # Persist the alert log + demo latch to data_dir (./run.sh sets this). Off by
+    # default so tests and throwaway processes never share state on disk.
+    local_persistence: bool = False
     alert_cooldown_seconds: int = 300
 
     # HTTP
@@ -171,6 +183,11 @@ class Settings(BaseSettings):
     def sns_live(self) -> bool:
         """Simulations/replays deliver for real only if BOTH flags say so."""
         return self.sim_live_sms and not self.alert_dry_run
+
+    @property
+    def drill_live(self) -> bool:
+        """All three gates set and a topic to publish to."""
+        return self.sns_live and self.demo_sms_live and bool(self.sns_topic_arn)
 
     @property
     def melt_months(self) -> set[int]:

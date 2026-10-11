@@ -8,7 +8,7 @@ for port in 8000 5173; do lsof -ti tcp:$port | xargs kill 2>/dev/null || true; d
 [ -x "$root/backend/.venv/bin/python" ] || { python3 -m venv "$root/backend/.venv"; "$root/backend/.venv/bin/pip" install -q -r "$root/backend/requirements.txt"; }
 [ -d "$root/frontend/node_modules" ] || (cd "$root/frontend" && npm install --silent)
 
-(cd "$root/backend" && exec .venv/bin/uvicorn src.main:app --port 8000 --log-level warning) > "$root/backend/server.log" 2>&1 &
+(cd "$root/backend" && LOCAL_PERSISTENCE=true exec .venv/bin/uvicorn src.main:app --port 8000 --log-level warning) > "$root/backend/server.log" 2>&1 &
 (cd "$root/frontend" && exec npx vite --port 5173 --strictPort) > "$root/frontend/vite.log" 2>&1 &
 
 for _ in $(seq 1 60); do

@@ -20,6 +20,13 @@ from src.services.sns_service import AlertError, SnsAlertService, build_message
 
 log = logging.getLogger(__name__)
 
+
+def _utcnow() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 DEMO_RECIPIENTS = {"operators": 3, "officials": 5, "public": 120}
 AUDIENCE_LABEL = {"operators": "Control-room operators", "officials": "District officials",
                   "public": "Downstream residents"}
@@ -33,8 +40,8 @@ def internal_message(lake: Lake, level: str, reasons: list[dict]) -> str:
 
 
 class AlertDispatcher:
-    def __init__(self, settings: Settings, sns: SnsAlertService, alert_log: AlertLog) -> None:
-        self._s, self._sns, self._log = settings, sns, alert_log
+    def __init__(self, settings: Settings, sns: SnsAlertService, alert_log: AlertLog, latch: Any = None) -> None:
+        self._s, self._sns, self._log, self._latch = settings, sns, alert_log, latch
 
     def _phones(self, audience: str) -> list[str]:
         s = self._s
@@ -89,15 +96,49 @@ class AlertDispatcher:
             return f"AWS SNS topic {self._s.sns_topic_arn.rsplit(':', 1)[-1]}"
         return "SMS via AWS SNS"
 
-    def approve(self, alert_id: int, approver: str, live: bool) -> dict[str, Any] | None:
+    def approve(self, alert_id: int, approver: str, live: bool = False) -> dict[str, Any] | None:
+        """Operator approval of a pending public alert.
+
+        The only route from a simulation to a real phone is the demo drill: an
+        EVACUATE public alert from the Outburst night sim, with all three gates
+        set, consuming the persisted latch. Everything else stays simulated.
+        """
         rec = self._log.get(alert_id)
         if not rec or rec["status"] != "pending_approval":
             return None
         from src.core.config import LAKES
 
-        status, ids, n = self._deliver(rec["audience"], rec["message"], live, level=rec["level"],
-                                       lake=LAKES.get(rec["lake"]))
+        lake = LAKES.get(rec["lake"])
+        if rec.get("source") == "simulation" and rec["level"] == "EVACUATE" and rec["audience"] == "public":
+            return self._approve_drill(rec, approver, lake)
+        status, ids, n = self._deliver(rec["audience"], rec["message"], live, level=rec["level"], lake=lake)
         return self._log.update(alert_id, status=status, message_ids=ids, recipients=n, approved_by=approver)
+
+    def _approve_drill(self, rec: dict[str, Any], approver: str, lake: Lake | None) -> dict[str, Any] | None:
+        base = {"approved_by": approver}
+        if not self._s.drill_live or self._latch is None:
+            return self._log.update(rec["id"], status="simulated", note="practice mode: real SMS needs all three gates", **base)
+        if not self._latch.consume():
+            return self._log.update(rec["id"], status="simulated", note="drill already sent; re-arm to send again", **base)
+        try:
+            mid = self.send_drill(lake, "EVACUATE")
+        except Exception as exc:  # nothing went out: give the arming back so the operator can retry
+            log.error("drill publish failed: %s", exc)
+            self._latch.rearm()
+            return self._log.update(rec["id"], status="failed", note=str(exc)[:200], **base)
+        self._latch.record(mid)
+        return self._log.update(rec["id"], status="sent", message_ids=[mid], accepted_at=_utcnow(),
+                                channel=self.drill_channel(), live=True, recipients=1, **base)
+
+    def send_drill(self, lake: Lake | None, level: str) -> str:
+        """One real drill publish (callers check the gates). Returns the SNS MessageId."""
+        return self._sns.publish_drill(lake, level)
+
+    def drill_channel(self) -> str:
+        from src.services.sns_service import topic_account, topic_region
+
+        acct = topic_account(self._s.sns_topic_arn) or ""
+        return f"Amazon SNS (account ...{acct[-4:]}, {topic_region(self._s.sns_topic_arn)})"
 
     def reject(self, alert_id: int, approver: str) -> dict[str, Any] | None:
         rec = self._log.get(alert_id)

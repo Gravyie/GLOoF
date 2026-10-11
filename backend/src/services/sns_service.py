@@ -42,6 +42,54 @@ TEMPLATES: dict[str, dict[str, str]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Drill messages (cross-account topic, MessageStructure=json)
+# --------------------------------------------------------------------------- #
+# GSM 03.38 basic character set (+ the common extension chars). Anything outside
+# it forces UCS-2 and drops one SMS from 160 to 70 characters.
+GSM7 = set("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§"
+           "¿abcdefghijklmnopqrstuvwxyzäöñüà")
+SMS_MAX = 160
+DRILL_PREFIX = "DRILL - TEST ONLY"
+DRILL_ACTION = {
+    "WATCH": "Stay informed. Follow official guidance.",
+    "ADVISORY": "Be ready to move. Follow official guidance.",
+    "WARNING": "Keep away from the river. Follow official guidance.",
+    "EVACUATE": "Move to high ground away from the river. Follow official guidance.",
+    "TEST": "Notification path check. No action needed.",
+}
+
+
+def is_gsm7(text: str) -> bool:
+    return all(ch in GSM7 for ch in text)
+
+
+def build_drill_sms(lake: Lake | None, level: str) -> str:
+    name = lake.name if lake else "Glacial Lake Monitor"
+    body = f"{DRILL_PREFIX}: {level} - {name}\n{DRILL_ACTION[level]}"
+    if len(body) > SMS_MAX or not is_gsm7(body):
+        raise AlertError("drill SMS must be <= 160 GSM-7 characters")
+    return body
+
+
+def build_drill_email(lake: Lake | None, level: str) -> str:
+    head = f"{DRILL_PREFIX}\n\nThis is a drill of the Glacial Lake Monitor alert path. No real emergency.\n\n"
+    if lake and level in TEMPLATES["en"]:
+        return head + build_message(lake, level)
+    return head + build_drill_sms(lake, level)
+
+
+def topic_region(arn: str | None) -> str | None:
+    """arn:aws:sns:<region>:<account>:<name> -> region (None if not an SNS ARN)."""
+    parts = (arn or "").split(":")
+    return parts[3] if len(parts) >= 6 and parts[2] == "sns" and parts[3] else None
+
+
+def topic_account(arn: str | None) -> str | None:
+    parts = (arn or "").split(":")
+    return parts[4] if len(parts) >= 6 and parts[2] == "sns" else None
+
+
 class AlertError(RuntimeError):
     pass
 
@@ -89,8 +137,33 @@ class SnsAlertService:
 
     def _sns(self):
         if self._client is None:
-            self._client = boto3.client("sns", region_name=self._s.aws_region)
+            # The topic may live in another account and region (the SMS account is
+            # us-east-1): publish from that region, not the app's own.
+            region = topic_region(self._s.sns_topic_arn) or self._s.aws_region
+            self._client = boto3.client("sns", region_name=region)
         return self._client
+
+    def publish_drill(self, lake: Lake | None, level: str, *, audience: str = "public") -> str:
+        """One drill message to the topic: short GSM-7 SMS, bilingual email. Returns the MessageId."""
+        import json
+
+        if not self._s.sns_topic_arn:
+            raise AlertError("SNS_TOPIC_ARN is not configured")
+        sms = build_drill_sms(lake, level)
+        payload = {"default": sms, "sms": sms, "email": build_drill_email(lake, level)}
+        attrs = {
+            "AWS.SNS.SMS.SMSType": {"DataType": "String", "StringValue": "Transactional"},
+            "audience": {"DataType": "String", "StringValue": audience},
+            "level": {"DataType": "String", "StringValue": level},
+            "lake": {"DataType": "String", "StringValue": lake.id if lake else "all"},
+        }
+        subject = f"{DRILL_PREFIX}: GLOF {level}" + (f" - {lake.name}" if lake else "")
+        try:
+            resp = self._sns().publish(TopicArn=self._s.sns_topic_arn, Message=json.dumps(payload),
+                                       MessageStructure="json", Subject=subject[:100], MessageAttributes=attrs)
+        except (ClientError, BotoCoreError) as exc:
+            raise AlertError(f"SNS publish failed: {exc}") from exc
+        return resp["MessageId"]
 
     def _attributes(self) -> dict[str, dict[str, str]]:
         attrs = {"AWS.SNS.SMS.SMSType": {"DataType": "String", "StringValue": "Transactional"}}

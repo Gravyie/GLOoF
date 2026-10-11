@@ -1,5 +1,0 @@
-region = "ap-south-1"
-subscribers = [
-  { protocol = "email", endpoint = "you@example.com", audiences = ["operators", "officials", "public"] },
-  # { protocol = "sms", endpoint = "+919800000000", audiences = ["public"] },  # SNS SMS sandbox: verify the number first
-]

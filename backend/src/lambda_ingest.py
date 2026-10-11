@@ -44,7 +44,10 @@ def run(event: dict[str, Any] | None = None) -> dict[str, Any]:
     store = make_store(s)
     builder = ArchiveBuilder(s, StacSceneFinder(s))
     dispatcher = AlertDispatcher(s, SnsAlertService(s), AlertLog())
-    live = not event.get("dry_run", False) and not s.alert_dry_run and bool(s.sns_topic_arn)
+    # Real notifications only when explicitly enabled for the Lambda (off by default, so
+    # a fresh deployment cannot text anyone on its first run).
+    live = (s.lambda_live_alerts and not event.get("dry_run", False) and not s.alert_dry_run
+            and bool(s.sns_topic_arn))
     report: dict[str, Any] = {"ran_at": datetime.now(timezone.utc).isoformat(), "live_sns": live, "lakes": {}}
 
     for lake_id in event.get("lakes") or [k for k in LAKES if store.load(k) is not None] or ["south_lhonak"]:
@@ -80,7 +83,22 @@ def run(event: dict[str, Any] | None = None) -> dict[str, Any]:
             "alerts": [{"audience": a["audience"], "status": a["status"], "message_ids": a["message_ids"]} for a in sent],
         }
     log.info(json.dumps(report))
+    emit_success_metric()
     return report
+
+
+def emit_success_metric() -> None:
+    """CloudWatch Embedded Metric Format: one IngestSuccess datapoint per completed run.
+    The 'no successful ingest in 48 h' alarm watches for its absence. Printing EMF to
+    stdout needs no extra IAM permission (it goes through the function's log group)."""
+    import time
+
+    print(json.dumps({
+        "_aws": {"Timestamp": int(time.time() * 1000),
+                 "CloudWatchMetrics": [{"Namespace": "GLOF", "Dimensions": [[]],
+                                        "Metrics": [{"Name": "IngestSuccess", "Unit": "Count"}]}]},
+        "IngestSuccess": 1,
+    }))
 
 
 def handler(event, context):  # noqa: ARG001 - Lambda signature
