@@ -8,7 +8,10 @@ for port in 8000 5173; do lsof -ti tcp:$port | xargs kill 2>/dev/null || true; d
 [ -x "$root/backend/.venv/bin/python" ] || { python3 -m venv "$root/backend/.venv"; "$root/backend/.venv/bin/pip" install -q -r "$root/backend/requirements.txt"; }
 [ -d "$root/frontend/node_modules" ] || (cd "$root/frontend" && npm install --silent)
 
-(cd "$root/backend" && LOCAL_PERSISTENCE=true exec .venv/bin/uvicorn src.main:app --port 8000 --log-level warning) > "$root/backend/server.log" 2>&1 &
+# AWS_PROFILE from backend/.env (written by infra/local-live.sh) is for boto3, which
+# reads it from the environment, not from pydantic settings.
+aws_profile="$(grep -E '^AWS_PROFILE=' "$root/backend/.env" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+(cd "$root/backend" && exec env ${aws_profile:+AWS_PROFILE=$aws_profile} LOCAL_PERSISTENCE=true .venv/bin/uvicorn src.main:app --port 8000 --log-level warning) > "$root/backend/server.log" 2>&1 &
 (cd "$root/frontend" && exec npx vite --port 5173 --strictPort) > "$root/frontend/vite.log" 2>&1 &
 
 for _ in $(seq 1 60); do

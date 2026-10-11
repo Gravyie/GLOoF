@@ -193,6 +193,20 @@ registered phone automatically, with no approval step. Flood night stays practic
 The site is public, so while the drill is on, anyone who presses Play can trigger the SMS (limited by the per-run rule,
 the cooldown and the monthly spend cap). Turn it off when the demo is over.
 
+### Sending the real SMS from localhost (e.g. to record a demo video)
+
+```bash
+cd infra && ./local-live.sh      # writes backend/.env (gitignored) from the deployed topic
+cd .. && ./run.sh                # restart; the header now reads "Alerts live on Amazon SNS"
+```
+
+Press Play in History at http://localhost:5173. At Warning, the phones get the drill SMS, with the same rules (one per
+run, 5-minute cooldown). For quicker retakes use `DRILL_COOLDOWN_SECONDS=60 ./local-live.sh`.
+
+The local app publishes with the `sms` profile. That account owns the topic, so no cross-account permission is needed.
+Its once-per-run latch is a local file, separate from the deployed site's latch, so each can send once per run.
+`./local-live.sh off` returns the local app to practice mode.
+
 What the messages look like:
 
 - **SMS** (98 GSM-7 characters):
