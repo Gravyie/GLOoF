@@ -33,6 +33,26 @@ CloudWatch alarms reach the topic through a small relay Lambda rather than a dir
 the main region and the topic in us-east-1, and as far as we know an alarm's SNS action must be in its own region
 (not confirmed in AWS docs). The relay works either way.
 
+## Quickest path: one script
+
+```bash
+cd infra && ./setup.sh
+```
+
+Paste the access key of each account when asked (input hidden; keys go only to `~/.aws/credentials`).
+The script then does everything below automatically:
+- checks both accounts;
+- reads the verified sandbox numbers;
+- asks for alert emails and whether to turn the real SMS drill on;
+- writes `terraform.tfvars`;
+- creates the state bucket;
+- starts Docker;
+- after one confirmation, runs `deploy.sh`.
+
+It ends by printing the site URL and the operator key. Re-running it is safe and remembers your answers.
+
+The sections below describe the same steps by hand.
+
 ## One-time setup
 
 ### 1. Credentials (both accounts, static keys, never root)
