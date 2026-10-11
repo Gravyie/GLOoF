@@ -202,48 +202,85 @@ function SummaryCard({ archive, model, cur, day, started, glacier, gYear }) {
   )
 }
 
-/* ------------------------------------------------------------------ layers */
-function LayersMenu({ layers, setLayers, glacier, gYear, ice, hasIce, baselineLabel }) {
-  const [open, setOpen] = useState(false)
-  const ref = useDismiss(open, () => setOpen(false))
-  const toggle = (k) => setLayers((l) => ({ ...l, [k]: !l[k] }))
+/* ------------------------------------------------------------------ legend */
+function Swatch({ kind, color }) {
+  if (kind === 'fill') return <span className="w-4 h-2.5 rounded-[3px] shrink-0" style={{ background: color }} />
+  if (kind === 'outline') return <span className="w-4 h-2.5 rounded-[3px] shrink-0 border" style={{ borderColor: color }} />
+  if (kind === 'ramp') return <span className="w-4 h-[3px] rounded shrink-0" style={{ background: `linear-gradient(90deg, ${RING_RAMP[0]}, ${RING_RAMP.at(-1)})` }} />
+  return <span className="w-4 shrink-0 border-t-2" style={{ borderColor: color, borderStyle: kind }} />
+}
+
+function Row({ swatch, children, sub }) {
   return (
-    <div ref={ref} className="relative">
-      <button className="pill" aria-expanded={open} onClick={() => setOpen((v) => !v)}>Layers</button>
+    <div className="flex gap-2.5">
+      <span className="h-[18px] flex items-center">{swatch}</span>
+      <span>{children}{sub && <span className="block text-muted text-[12px]">{sub}</span>}</span>
+    </div>
+  )
+}
+
+function Toggle({ checked, onChange, children }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer font-medium">
+      <input type="checkbox" checked={checked} onChange={onChange} />{children}
+    </label>
+  )
+}
+
+function Legend({ layers, setLayers, glacier, gYear, ice, hasIce, baselineLabel }) {
+  const [open, setOpen] = useState(true)
+  const toggle = (k) => setLayers((l) => ({ ...l, [k]: !l[k] }))
+  const by = glacier?.pi.baseline_year ?? 2018
+  return (
+    <section className="panel absolute z-10 right-4 bottom-[112px] w-[288px] text-[13px] max-h-[calc(100%-300px)] overflow-y-auto max-[1100px]:hidden" aria-label="Map legend">
+      <button className="w-full flex items-center justify-between px-4 py-3 font-semibold" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        Map key <span className="text-muted font-normal text-[12px]">{open ? 'Hide' : 'Show'}</span>
+      </button>
       {open && (
-        <div className="panel slide-in absolute right-0 top-11 w-[320px] p-4 space-y-4 text-[13px]">
-          <label className="flex gap-3 cursor-pointer">
-            <input type="checkbox" className="mt-1" checked={layers.rings} onChange={() => toggle('rings')} />
-            <span>
-              <span className="font-medium">Lake in past years</span>
-              <span className="block text-muted mt-0.5">One blue line per year, darker is older. The yellow dashed line is {baselineLabel}.</span>
-            </span>
-          </label>
+        <div className="px-4 pb-4 space-y-3">
+          <div className="space-y-1.5">
+            <Row swatch={<Swatch kind="fill" color="#3d9bff" />}>Lake on this image</Row>
+            <Toggle checked={layers.rings} onChange={() => toggle('rings')}>Lake in past years</Toggle>
+            {layers.rings && (
+              <div className="pl-6 space-y-1.5">
+                <Row swatch={<Swatch kind="ramp" />}>One line per year, darker is older</Row>
+                <Row swatch={<Swatch kind="dashed" color="#f5d06b" />}>{baselineLabel} lake (baseline)</Row>
+              </div>
+            )}
+          </div>
+
           {hasIce && (
-            <label className="flex gap-3 cursor-pointer">
-              <input type="checkbox" className="mt-1" checked={layers.glacier} onChange={() => toggle('glacier')} />
-              <span>
-                <span className="font-medium">Glacier ice{gYear ? `, ${gYear.year}` : ''}</span>
-                <span className="block text-muted mt-0.5">White is ice that lasted through autumn. Orange is ice lost since {glacier?.pi.baseline_year ?? 2018}. Green outline is ice that seems to have appeared, which is usually fresh snow.</span>
-                <span className="block text-muted mt-1.5">Seasonal snow is removed as far as possible. Ice under rock debris is not detected, so the glacier tongue may look smaller than it is.</span>
-                {gYear?.low_confidence && <span className="block text-[#f5d06b] mt-1.5">Few clear images this year: low confidence.</span>}
-                {gYear?.season_complete === false && <span className="block text-[#f5d06b] mt-1.5">{gYear.year} season is still in progress.</span>}
-                {ice.error && <span className="block text-[#ff8a80] mt-1.5">{ice.error.message}</span>}
-              </span>
-            </label>
-          )}
-          {hasIce && (
-            <label className="flex gap-3 cursor-pointer">
-              <input type="checkbox" className="mt-1" checked={layers.rgi} onChange={() => toggle('rgi')} />
-              <span>
-                <span className="font-medium">Glacier inventory outline</span>
-                <span className="block text-muted mt-0.5">RGI 7.0, from a satellite image of {glacier?.rgiDates.length ? glacier.rgiDates.map(fmtDate).join(', ') : 'about 2000'}. An independent dataset made a different way, shown for reference only.</span>
-              </span>
-            </label>
+            <div className="space-y-1.5 pt-3 border-t border-white/[.06]">
+              <Toggle checked={layers.glacier} onChange={() => toggle('glacier')}>
+                Glacier ice{gYear && layers.glacier ? `, ${gYear.year}` : ''}
+              </Toggle>
+              {layers.glacier && (
+                <div className="pl-6 space-y-1.5">
+                  <Row swatch={<Swatch kind="fill" color="rgb(230 238 246 / .45)" />}>Ice that lasted through autumn</Row>
+                  <Row swatch={<Swatch kind="dashed" color="#ffffff" />}>{by} ice (baseline)</Row>
+                  <Row swatch={<Swatch kind="fill" color="#ec7f2c" />}>Ice lost since {by}</Row>
+                  <Row swatch={<Swatch kind="outline" color="#3fd39a" />} sub="usually fresh snow, not real growth">Ice gained since {by}</Row>
+                  <p className="text-[12px] text-muted leading-snug pt-1">Seasonal snow removed as far as possible. Ice under rock debris is not detected, so the glacier tongue may look smaller than it is.</p>
+                  {gYear?.low_confidence && <p className="text-[12px] text-[#f5d06b]">Few clear images this year: low confidence.</p>}
+                  {gYear?.season_complete === false && <p className="text-[12px] text-[#f5d06b]">{gYear.year} season still in progress.</p>}
+                  {ice.loading && <p className="text-[12px] text-muted">Loading glacier layer...</p>}
+                  {ice.error && <p className="text-[12px] text-[#ff8a80]">{ice.error.message}</p>}
+                </div>
+              )}
+              <Toggle checked={layers.rgi} onChange={() => toggle('rgi')}>Glacier inventory outline</Toggle>
+              {layers.rgi && (
+                <div className="pl-6">
+                  <Row swatch={<Swatch kind="dotted" color="#9085e9" />}
+                    sub="independent dataset, different method; reference only">
+                    RGI 7.0, image of {glacier?.rgiDates.length ? glacier.rgiDates.map(fmtDate).join(', ') : '...'}
+                  </Row>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -476,7 +513,6 @@ export default function ArchiveView({ archive, replay, system, orbit, onToggleOr
 
       <div className="absolute z-20 right-4 top-[72px] flex items-center gap-2 max-[1100px]:hidden">
         <button className="pill" onClick={onToggleOrbit} aria-pressed={orbit}>{orbit ? 'Stop turning' : 'Turn view'}</button>
-        <LayersMenu layers={layers} setLayers={setLayers} glacier={glacier} gYear={gYear} ice={ice} hasIce={archive.has_ice_layer} baselineLabel={model.tl.baseline.label} />
         <button className="pill" aria-expanded={alertsOpen} onClick={() => setAlertsOpen((v) => !v)}>
           Alerts
           <span className="num rounded-full min-w-6 h-6 px-1.5 grid place-items-center text-[12px]"
@@ -490,6 +526,7 @@ export default function ArchiveView({ archive, replay, system, orbit, onToggleOr
         </p>
       )}
 
+      <Legend layers={layers} setLayers={setLayers} glacier={glacier} gYear={gYear} ice={ice} hasIce={archive.has_ice_layer} baselineLabel={model.tl.baseline.label} />
       <Timeline model={model} state={replay.state} day={day} controls={replay} speed={speed} setSpeed={setSpeed} autopilot={autopilot}
         onCompare={() => setCompare(true)} canCompare={archive.has_ice_layer} />
       {alertsOpen && (
