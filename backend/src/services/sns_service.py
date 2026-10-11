@@ -151,19 +151,15 @@ class SnsAlertService:
 
         if not self._s.sns_topic_arn:
             raise AlertError("SNS_TOPIC_ARN is not configured")
-        when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
-        why = "\n".join(f"- {r['text']}" for r in reasons) or "- risk level reached"
-        body = (f"{DRILL_PREFIX}\n\n"
-                f"The Glacial Lake Monitor history replay reached {level} for {lake.name}"
-                f"{f' on the satellite record of {replay_date}' if replay_date else ''}.\n\n"
-                f"Why:\n{why}\n\n"
-                f"Message residents would receive:\n{build_message(lake, level) if level in TEMPLATES['en'] else '-'}\n\n"
-                f"Sent {when} by Amazon SNS. This is a drill; no real emergency.")
+        from src.services.email_alert import render_text
+
+        when = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+        body = render_text(lake, level, reasons, replay_date, when)
         payload = {"default": body, "email": body}
         attrs = {"audience": {"DataType": "String", "StringValue": "email"},
                  "level": {"DataType": "String", "StringValue": level},
                  "lake": {"DataType": "String", "StringValue": lake.id}}
-        subject = f"[GLOF {level}] {lake.name} - drill alert"
+        subject = f"{DRILL_PREFIX}: GLOF {level} - {lake.name}"
         try:
             resp = self._sns().publish(TopicArn=self._s.sns_topic_arn, Message=json.dumps(payload),
                                        MessageStructure="json", Subject=subject[:100], MessageAttributes=attrs)

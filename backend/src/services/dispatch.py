@@ -40,8 +40,10 @@ def internal_message(lake: Lake, level: str, reasons: list[dict]) -> str:
 
 
 class AlertDispatcher:
-    def __init__(self, settings: Settings, sns: SnsAlertService, alert_log: AlertLog, latch: Any = None) -> None:
+    def __init__(self, settings: Settings, sns: SnsAlertService, alert_log: AlertLog, latch: Any = None,
+                 ses: Any = None) -> None:
         self._s, self._sns, self._log, self._latch = settings, sns, alert_log, latch
+        self._ses = ses  # SesEmailSender: designed HTML email; None -> SNS plain text
         self._last_email = 0.0
 
     def _phones(self, audience: str) -> list[str]:
@@ -145,13 +147,25 @@ class AlertDispatcher:
         if now - self._last_email < self._s.email_min_interval_seconds:
             return {**base, "status": "simulated", "live": False,
                     "note": f"email skipped: last one {int(now - self._last_email)} s ago"}
+        note = None
+        if self._ses is not None and self._ses.configured:  # designed HTML email
+            try:
+                mid = self._ses.send(lake, level, reasons, replay_date)
+                self._last_email = now
+                return {**base, "status": "sent", "recipients": len(self._s.alert_email_list), "message_ids": [mid],
+                        "live": True, "accepted_at": _utcnow(),
+                        "channel": f"Amazon SES ({self._s.ses_region or self._s.aws_region}), HTML email"}
+            except Exception as exc:  # fall back to the plain-text SNS email
+                log.error("SES email failed, falling back to SNS: %s", exc)
+                note = f"SES failed, sent plain text via SNS instead: {str(exc)[:160]}"
         try:
             mid = self._sns.publish_email(lake, level, reasons, replay_date=replay_date)
         except Exception as exc:
             log.error("email publish failed: %s", exc)
             return {**base, "status": "failed", "live": True, "note": str(exc)[:200]}
         self._last_email = now
-        return {**base, "status": "sent", "recipients": 1, "message_ids": [mid], "live": True, "accepted_at": _utcnow()}
+        out = {**base, "status": "sent", "recipients": 1, "message_ids": [mid], "live": True, "accepted_at": _utcnow()}
+        return {**out, "note": note} if note else out
 
     def send_drill(self, lake: Lake | None, level: str) -> str:
         """One real drill publish (callers check the gates). Returns the SNS MessageId."""

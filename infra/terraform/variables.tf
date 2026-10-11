@@ -90,3 +90,9 @@ variable "enable_cloudfront" {
   type        = bool
   default     = true
 }
+
+variable "ses_sender" {
+  description = "Sender address for the designed HTML alert email via Amazon SES (main account). Empty: plain-text SNS email."
+  type        = string
+  default     = ""
+}

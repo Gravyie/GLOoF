@@ -66,10 +66,10 @@ resource "aws_sns_topic_subscription" "sms" {
 # Each email subscription stays PendingConfirmation until its link is clicked.
 # Terraform cannot delete an unconfirmed subscription; SNS expires it after 3 days.
 resource "aws_sns_topic_subscription" "email" {
-  for_each      = toset(nonsensitive(var.alert_emails))
-  topic_arn     = aws_sns_topic.glof_alerts.arn
-  protocol      = "email"
-  endpoint      = each.value
+  for_each  = toset(nonsensitive(var.alert_emails))
+  topic_arn = aws_sns_topic.glof_alerts.arn
+  protocol  = "email"
+  endpoint  = each.value
   # no filter: email receives every audience, alarms included. (Attributes cannot be
   # set on a subscription that is still pending confirmation anyway.)
 }

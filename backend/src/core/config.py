@@ -164,6 +164,12 @@ class Settings(BaseSettings):
     # Email alert on EVERY pass of the trigger level (email-only: phones filter it out).
     # The minimum gap only stops a burst when the timeline is dragged back and forth.
     email_min_interval_seconds: int = 30
+    # Designed HTML alert email via Amazon SES (SNS email is plain text only).
+    # Unset SES_SENDER -> the plain-text SNS email is used instead.
+    ses_sender: str | None = None
+    ses_region: str | None = None  # defaults to aws_region
+    ses_profile: str | None = None  # local runs: the profile that owns SES (main account)
+    alert_emails: str = ""  # comma-separated recipients (SES sandbox: each must be verified)
     # The scheduled Lambda only notifies for real when this is true (off by default,
     # so a fresh deployment can never text anyone on its own).
     lambda_live_alerts: bool = False
@@ -191,6 +197,10 @@ class Settings(BaseSettings):
     def sns_live(self) -> bool:
         """Simulations/replays deliver for real only if BOTH flags say so."""
         return self.sim_live_sms and not self.alert_dry_run
+
+    @property
+    def alert_email_list(self) -> list[str]:
+        return [e.strip() for e in self.alert_emails.split(",") if e.strip()]
 
     @property
     def drill_live(self) -> bool:

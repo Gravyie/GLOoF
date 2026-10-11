@@ -174,7 +174,8 @@ def test_email_on_every_warning_pass_without_touching_phones(tmp_path):
     assert e["MessageStructure"] == "json" and "WARNING" in e["Subject"]
     assert e["MessageAttributes"]["audience"]["StringValue"] == "email"  # phones filter on audience=public
     body = json.loads(e["Message"])
-    assert body["email"].startswith(DRILL_PREFIX) and "South Lhonak" in body["email"] and "Why:" in body["email"]
+    assert DRILL_PREFIX in body["email"].splitlines()[1] and "South Lhonak" in body["email"]
+    assert "Why this alert:" in body["email"] and "नेपाली" in body["email"]  # sections per language
 
 
 def test_email_burst_guard(tmp_path):
@@ -280,3 +281,44 @@ def test_dynamo_alert_log_and_latch():
     assert latch.consume(0)[0] is True
     latch.give_back()
     assert latch.state()["armed"] is True and latch.state()["sent_epoch"] is None
+
+
+# --------------------------------------------------------------------------- SES HTML email
+class FakeSes:
+    def __init__(self, fail=False):
+        self.calls, self.fail = [], fail
+
+    def send_email(self, **kw):
+        if self.fail:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "MessageRejected", "Message": "Email address is not verified."}}, "SendEmail")
+        self.calls.append(kw)
+        return {"MessageId": f"ses-{len(self.calls)}"}
+
+
+def ses_settings(tmp_path, **kw):
+    return live_settings(tmp_path, ses_sender="sender@example.com", alert_emails="a@example.com,b@example.com",
+                         email_min_interval_seconds=0, **kw)
+
+
+def test_html_email_via_ses_replaces_sns_email(tmp_path):
+    app, fake = app_with_fake(ses_settings(tmp_path))
+    ses = FakeSes()
+    app.state.ses._client = ses  # noqa: SLF001
+    alerts = run_history(TestClient(app))
+    em = next(a for a in alerts if a["audience"] == "email")
+    assert em["status"] == "sent" and em["message_ids"] == ["ses-1"] and "SES" in em["channel"]
+    assert fake.emails == [] and len(ses.calls) == 1  # no duplicate plain-text SNS email
+    call = ses.calls[0]
+    assert call["Destination"]["ToAddresses"] == ["a@example.com", "b@example.com"]
+    body = call["Content"]["Simple"]["Body"]
+    assert "#c53030" in body["Html"]["Data"] and "हिन्दी" in body["Html"]["Data"] and "नेपाली" in body["Html"]["Data"]
+    assert DRILL_PREFIX in body["Text"]["Data"] and call["Content"]["Simple"]["Subject"]["Data"].startswith(DRILL_PREFIX)
+
+
+def test_ses_failure_falls_back_to_sns_plain_text(tmp_path):
+    app, fake = app_with_fake(ses_settings(tmp_path))
+    app.state.ses._client = FakeSes(fail=True)  # noqa: SLF001
+    alerts = run_history(TestClient(app))
+    em = next(a for a in alerts if a["audience"] == "email")
+    assert em["status"] == "sent" and "SES failed" in em["note"] and len(fake.emails) == 1

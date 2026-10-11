@@ -53,7 +53,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.alerts = SnsAlertService(settings)
     app.state.alert_log = make_alert_log(settings)
     app.state.latch = make_latch(settings)
-    app.state.dispatcher = AlertDispatcher(settings, app.state.alerts, app.state.alert_log, app.state.latch)
+    from src.services.email_alert import SesEmailSender
+
+    app.state.ses = SesEmailSender(settings)
+    app.state.dispatcher = AlertDispatcher(settings, app.state.alerts, app.state.alert_log, app.state.latch,
+                                           app.state.ses)
     # Replays deliver through the dispatcher as "simulated". The one exception is the
     # demo drill: the History replay reaching DRILL_TRIGGER_LEVEL sends one real SMS
     # (three gates, latched once per run, cooldown).

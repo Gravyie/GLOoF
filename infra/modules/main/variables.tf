@@ -51,3 +51,16 @@ variable "enable_cloudfront" {
   type        = bool
   default     = true
 }
+
+variable "ses_sender" {
+  description = "Verified sender address for the HTML alert email (SES). Empty: SNS plain-text email only."
+  type        = string
+  default     = ""
+}
+
+variable "alert_emails" {
+  description = "Recipients of the HTML alert email"
+  type        = list(string)
+  sensitive   = true
+  default     = []
+}

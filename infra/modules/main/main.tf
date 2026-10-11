@@ -275,6 +275,32 @@ resource "aws_lambda_permission" "relay" {
   source_arn    = aws_cloudwatch_event_rule.alarms.arn
 }
 
+# ============================================================== SES (HTML alert email)
+# SNS email is plain text only; the designed alert goes through SES. In the SES sandbox
+# (new accounts) the sender AND every recipient must be a verified identity: creating
+# these makes SES send each address a verification link to click once.
+locals {
+  ses_addresses = var.ses_sender == "" ? [] : distinct(concat([var.ses_sender], nonsensitive(var.alert_emails)))
+}
+
+resource "aws_sesv2_email_identity" "alert" {
+  for_each       = toset(local.ses_addresses)
+  email_identity = each.value
+}
+
+resource "aws_iam_role_policy" "task_ses" {
+  count = var.ses_sender == "" ? 0 : 1
+  role  = aws_iam_role.ecs_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ses:SendEmail"]
+      Resource = [for i in aws_sesv2_email_identity.alert : i.arn]
+    }]
+  })
+}
+
 # ============================================================== secret
 resource "random_password" "api_key" {
   length  = 32
@@ -334,7 +360,7 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 # With CloudFront: HTTP from CloudFront's origin-facing ranges only.
 # Without CloudFront (enable_cloudfront = false): the ALB is the public entry point.
 resource "aws_security_group" "alb" {
-  name        = "${var.name}-alb"
+  name = "${var.name}-alb"
   # Keep this constant: AWS cannot edit a security group's description, so changing it
   # forces a replace, which fails while the ALB and the task still use the group.
   # The ingress rule below is what actually changes with enable_cloudfront.
@@ -442,6 +468,9 @@ resource "aws_ecs_task_definition" "api" {
       { name = "ALERT_DRY_RUN", value = var.alert_dry_run ? "true" : "false" },
       { name = "SIM_LIVE_SMS", value = var.sim_live_sms ? "true" : "false" },
       { name = "DEMO_SMS_LIVE", value = var.demo_sms_live ? "true" : "false" },
+      { name = "SES_SENDER", value = var.ses_sender },
+      { name = "SES_REGION", value = local.region },
+      { name = "ALERT_EMAILS", value = join(",", nonsensitive(var.alert_emails)) },
     ]
     secrets = [{ name = "ALERT_API_KEY", valueFrom = aws_secretsmanager_secret.api_key.arn }]
     logConfiguration = {

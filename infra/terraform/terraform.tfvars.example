@@ -18,3 +18,7 @@ demo_sms_live = false
 # New accounts may need AWS Support to verify them before CloudFront works.
 # false = serve the site from the ALB over HTTP until then.
 enable_cloudfront = true
+
+# Designed HTML alert email via Amazon SES. Each address (sender + alert_emails) gets an
+# SES verification link once. Leave empty for plain-text SNS email only.
+ses_sender = "you@example.com"

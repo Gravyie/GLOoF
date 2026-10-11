@@ -43,6 +43,8 @@ module "main" {
   sim_live_sms       = var.sim_live_sms
   demo_sms_live      = var.demo_sms_live
   enable_cloudfront  = var.enable_cloudfront
+  ses_sender         = var.ses_sender
+  alert_emails       = var.alert_emails
 }
 
 module "sms" {
