@@ -3,6 +3,9 @@
 #   docker build --platform linux/arm64 -f Dockerfile.lambda -t glof-ingest .
 FROM public.ecr.aws/lambda/python:3.12
 
+# rasterio's bundled GDAL links against libexpat, which the minimal base image lacks
+RUN dnf install -y expat && dnf clean all
+
 COPY requirements-lambda.txt ${LAMBDA_TASK_ROOT}/
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
 
