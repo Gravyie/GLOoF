@@ -22,11 +22,22 @@ KEY = {"X-API-Key": "k"}
 
 class FakeSns:
     def __init__(self):
-        self.calls = []
+        self.all = []
 
     def publish(self, **kw):
-        self.calls.append(kw)
-        return {"MessageId": f"msg-{len(self.calls)}"}
+        self.all.append(kw)
+        return {"MessageId": f"msg-{len(self.all)}"}
+
+    def _aud(self, aud):
+        return [c for c in self.all if c["MessageAttributes"].get("audience", {}).get("StringValue") == aud]
+
+    @property
+    def calls(self):  # SMS-reaching publishes (drill / test): audience=public
+        return self._aud("public")
+
+    @property
+    def emails(self):  # email-only publishes: audience=email, filtered out by the phones
+        return self._aud("email")
 
 
 def live_settings(tmp_path, **kw):
@@ -89,8 +100,8 @@ def test_gates_off_sends_nothing(tmp_path):
     app, fake = app_with_fake(live_settings(tmp_path, demo_sms_live=False))
     client = TestClient(app)
     w = public_warning(run_history(client))
-    assert w["status"] == "simulated" and fake.calls == []
-    assert client.post("/api/notify/test", headers=KEY).status_code == 409 and fake.calls == []
+    assert w["status"] == "simulated" and fake.all == []
+    assert client.post("/api/notify/test", headers=KEY).status_code == 409 and fake.all == []
     assert client.get("/api/system").json()["sns"]["mode"] == "simulated"
 
 
@@ -101,7 +112,9 @@ def test_history_warning_sends_one_sms_automatically(tmp_path):
     w = public_warning(alerts)
     assert w["status"] == "sent" and w["message_ids"] == ["msg-1"] and w["accepted_at"] and "us-east-1" in w["channel"]
     assert len(fake.calls) == 1  # only the Warning public alert is real; Watch/Advisory/officials stay simulated
-    assert all(a["status"] == "simulated" for a in alerts if a is not w and a["id"] != w["id"])
+    em = next(a for a in alerts if a["audience"] == "email")
+    assert em["status"] == "sent" and len(fake.emails) == 1
+    assert all(a["status"] == "simulated" for a in alerts if a["id"] not in (w["id"], em["id"]))
     call = fake.calls[0]
     assert call["TopicArn"] == TOPIC and call["MessageStructure"] == "json"
     assert call["MessageAttributes"]["AWS.SNS.SMS.SMSType"]["StringValue"] == "Transactional"
@@ -146,14 +159,40 @@ def test_flood_night_never_sends_for_real(tmp_path):
     app, fake = app_with_fake(live_settings(tmp_path))
     client = TestClient(app)
     rec = client.post(f"/api/alerts/{pending_evacuate(app)}/approve", headers=KEY).json()
-    assert rec["status"] == "simulated" and fake.calls == []
+    assert rec["status"] == "simulated" and fake.all == []
+
+
+def test_email_on_every_warning_pass_without_touching_phones(tmp_path):
+    app, fake = app_with_fake(live_settings(tmp_path, email_min_interval_seconds=0))
+    client = TestClient(app)
+    run_history(client)
+    client.post(f"{R}/seek{Q}&progress=0")   # seek back over Warning ...
+    client.post(f"{R}/seek{Q}&progress=1")   # ... and past it again: same run
+    run_history(client)                      # and a brand-new run
+    assert len(fake.emails) == 3 and len(fake.calls) == 1  # email every time; SMS once (cooldown)
+    e = fake.emails[0]
+    assert e["MessageStructure"] == "json" and "WARNING" in e["Subject"]
+    assert e["MessageAttributes"]["audience"]["StringValue"] == "email"  # phones filter on audience=public
+    body = json.loads(e["Message"])
+    assert body["email"].startswith(DRILL_PREFIX) and "South Lhonak" in body["email"] and "Why:" in body["email"]
+
+
+def test_email_burst_guard(tmp_path):
+    app, fake = app_with_fake(live_settings(tmp_path, email_min_interval_seconds=30))
+    client = TestClient(app)
+    run_history(client)
+    client.post(f"{R}/seek{Q}&progress=0")
+    client.post(f"{R}/seek{Q}&progress=1")
+    assert len(fake.emails) == 1
+    skipped = [a for a in client.get(f"{R}/state{Q}").json()["alerts"] if a["audience"] == "email"]
+    assert skipped and "email skipped" in skipped[-1]["note"]
 
 
 def test_send_test_and_system_report(tmp_path):
     app, fake = app_with_fake(live_settings(tmp_path))
     client = TestClient(app)
     r = client.post("/api/notify/test", headers=KEY).json()
-    assert r["status"] == "accepted by SNS" and r["message_id"] == "msg-1"
+    assert r["status"] == "accepted by SNS" and r["message_id"] == "msg-1" and fake.emails == []
     assert json.loads(fake.calls[0]["Message"])["sms"].startswith("DRILL - TEST ONLY: TEST")
     sysinfo = client.get("/api/system").json()
     assert sysinfo["sns"]["mode"] == "live" and sysinfo["sns"]["topic_account"] == "...4444"

@@ -287,7 +287,7 @@ function Legend({ layers, setLayers, glacier, gYear, ice, hasIce, baselineLabel 
 /* ------------------------------------------------------------------ alerts sheet */
 const STATUS = {
   simulated: { text: 'Simulated', cls: 'text-[#aeb6c0]' },
-  sent: { text: 'Real SMS accepted by Amazon SNS', cls: 'text-[#7fdb9a]' },
+  sent: { text: 'Accepted by Amazon SNS', cls: 'text-[#7fdb9a]' },
   pending_approval: { text: 'Waiting for approval', cls: 'text-[#f5d06b]' },
   rejected: { text: 'Rejected', cls: 'text-[#aeb6c0]' },
   failed: { text: 'Delivery failed', cls: 'text-[#ff8a80]' },
@@ -308,7 +308,7 @@ function AlertsSheet({ alerts, system, opKey, onOpKey, onDecide, error, onClose,
             </p>
             {live && (
               <p className="text-[13px] mt-1 text-muted">
-                When the replay reaches Warning, one real drill SMS goes to the registered phones automatically, once per run.
+                Every time the replay reaches Warning, an alert email goes to all confirmed subscribers. One real drill SMS also goes to the registered phones, once per run.
                 {system.demo_sms && !system.demo_sms.armed && system.demo_sms.sent_at ? ` Last sent ${new Date(system.demo_sms.sent_at).toLocaleTimeString()}.` : ''}
               </p>
             )}
@@ -433,7 +433,7 @@ function Toast({ alert }) {
   return (
     <div key={alert.id} className="slide-in absolute z-20 top-[72px] left-1/2 -translate-x-1/2 rounded-xl px-4 py-2.5 shadow-2xl text-[13px]"
       style={{ background: st.bg, color: st.fg, border: `1px solid ${st.dot}` }} role="status">
-      <b className="font-semibold">{st.label}</b>: {alert.status === 'sent' ? 'real SMS accepted by Amazon SNS' : `${alert.audience_label.toLowerCase()} notified`}{alert.date ? `, ${fmtMonth(alert.date)}` : ''}
+      <b className="font-semibold">{st.label}</b>: {alert.status === 'sent' ? (alert.audience === 'email' ? 'alert email sent by Amazon SNS' : 'real SMS accepted by Amazon SNS') : `${alert.audience_label.toLowerCase()} notified`}{alert.date ? `, ${fmtMonth(alert.date)}` : ''}
     </div>
   )
 }

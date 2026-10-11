@@ -29,7 +29,7 @@ def _utcnow() -> str:
 
 DEMO_RECIPIENTS = {"operators": 3, "officials": 5, "public": 120}
 AUDIENCE_LABEL = {"operators": "Control-room operators", "officials": "District officials",
-                  "public": "Downstream residents"}
+                  "public": "Downstream residents", "email": "Email subscribers"}
 
 
 def internal_message(lake: Lake, level: str, reasons: list[dict]) -> str:
@@ -42,6 +42,7 @@ def internal_message(lake: Lake, level: str, reasons: list[dict]) -> str:
 class AlertDispatcher:
     def __init__(self, settings: Settings, sns: SnsAlertService, alert_log: AlertLog, latch: Any = None) -> None:
         self._s, self._sns, self._log, self._latch = settings, sns, alert_log, latch
+        self._last_email = 0.0
 
     def _phones(self, audience: str) -> list[str]:
         s = self._s
@@ -87,6 +88,10 @@ class AlertDispatcher:
                 out.append(self._log.add(
                     lake=lake.id, level=level, audience=audience, audience_label=AUDIENCE_LABEL[audience],
                     message=message, source=source, sim_h=sim_h, **self._auto_drill(lake, level), **(meta or {})))
+                out.append(self._log.add(
+                    lake=lake.id, level=level, audience="email", audience_label=AUDIENCE_LABEL["email"],
+                    message=f"Email alert: {lake.name} reached {level}", source=source, sim_h=sim_h,
+                    **self._auto_email(lake, level, reasons, (meta or {}).get("date")), **(meta or {})))
                 continue
             needs_approval = audience == "public" and not autopilot
             if needs_approval:
@@ -129,6 +134,23 @@ class AlertDispatcher:
             self._latch.give_back()
             return {**base, "status": "failed", "live": True, "note": str(exc)[:200]}
         self._latch.record(mid)
+        return {**base, "status": "sent", "recipients": 1, "message_ids": [mid], "live": True, "accepted_at": _utcnow()}
+
+    def _auto_email(self, lake: Lake, level: str, reasons: list[dict], replay_date: str | None) -> dict[str, Any]:
+        """Email on every pass (no once-per-run latch); only a short gap against drag bursts."""
+        import time
+
+        base = {"recipients": 0, "message_ids": [], "channel": self.drill_channel() + ", email only"}
+        now = time.time()
+        if now - self._last_email < self._s.email_min_interval_seconds:
+            return {**base, "status": "simulated", "live": False,
+                    "note": f"email skipped: last one {int(now - self._last_email)} s ago"}
+        try:
+            mid = self._sns.publish_email(lake, level, reasons, replay_date=replay_date)
+        except Exception as exc:
+            log.error("email publish failed: %s", exc)
+            return {**base, "status": "failed", "live": True, "note": str(exc)[:200]}
+        self._last_email = now
         return {**base, "status": "sent", "recipients": 1, "message_ids": [mid], "live": True, "accepted_at": _utcnow()}
 
     def send_drill(self, lake: Lake | None, level: str) -> str:

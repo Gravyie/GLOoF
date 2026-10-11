@@ -161,6 +161,9 @@ class Settings(BaseSettings):
     drill_trigger_level: str = "WARNING"
     # Minimum time between two real drill SMS (stops rapid restarts burning the spend cap).
     drill_cooldown_seconds: int = 300
+    # Email alert on EVERY pass of the trigger level (email-only: phones filter it out).
+    # The minimum gap only stops a burst when the timeline is dragged back and forth.
+    email_min_interval_seconds: int = 30
     # The scheduled Lambda only notifies for real when this is true (off by default,
     # so a fresh deployment can never text anyone on its own).
     lambda_live_alerts: bool = False
