@@ -51,6 +51,10 @@ The script then does everything below automatically:
 
 It ends by printing the site URL and the operator key. Re-running it is safe and remembers your answers.
 
+Keys are asked for only once. Later runs reuse the saved `main` and `sms` profiles as long as they still work.
+Use `./setup.sh --new-keys` to replace them. To redeploy after a code change, `./deploy.sh` alone is enough; it never
+asks for keys.
+
 The sections below describe the same steps by hand.
 
 ## One-time setup

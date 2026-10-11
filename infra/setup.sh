@@ -185,12 +185,17 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 #
 # Glacial Lake Monitor: paste AWS keys for both accounts, everything else is automatic.
-#   cd infra && ./setup.sh
+#   cd infra && ./setup.sh               (keys asked once, then reused)
+#   cd infra && ./setup.sh --new-keys    (replace the saved keys)
 # Secrets (access keys) go ONLY to ~/.aws/credentials via `aws configure`.
 # Non-secret answers are remembered in infra/.setup.env (gitignored) for re-runs.
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$HERE/.setup.env"
+# Keys are asked for only once: later runs reuse the saved `main` / `sms` profiles
+# when they still authenticate. Pass --new-keys to replace them.
+NEW_KEYS=false
+[[ "${1:-}" == "--new-keys" ]] && NEW_KEYS=true
 TFVARS="$HERE/terraform/terraform.tfvars"
 TOTAL_STAGES=8
 
@@ -211,47 +216,61 @@ whoami_arn() { aws sts get-caller-identity --profile "$1" --query Arn --output t
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 stage "Main account: access key"
-say "The main account runs everything except SMS: website, API, Lambda, storage."
-say "Use an IAM user with admin rights, not the root user."
-open_url "https://console.aws.amazon.com/iam/home#/security_credentials"
-step "IAM -> Users -> your user -> Security credentials -> Create access key (CLI)."
-step "Copy the Access key ID and the Secret access key."
-ask MAIN_KEY_ID "Main account Access key ID:"
-ask_secret MAIN_SECRET "Main account Secret access key (hidden):"
-ask MAIN_REGION "Main region [ap-south-1]:"
-MAIN_REGION="${MAIN_REGION:-ap-south-1}"
-[[ -n "$MAIN_KEY_ID" && -n "$MAIN_SECRET" ]] || { warn "both values are required"; exit 1; }
-configure_profile main "$MAIN_KEY_ID" "$MAIN_SECRET" "$MAIN_REGION"
-unset MAIN_SECRET
-MAIN_ARN="$(whoami_arn main)" || { warn "these keys do not authenticate; check them and re-run"; exit 1; }
+if [[ "$NEW_KEYS" == false ]] && MAIN_ARN="$(whoami_arn main)"; then
+  say "Using the saved 'main' profile from ~/.aws/credentials (run ./setup.sh --new-keys to replace it)."
+  MAIN_REGION="$(aws configure get region --profile main || true)"
+  MAIN_REGION="${MAIN_REGION:-ap-south-1}"
+  REUSED_MAIN=true
+else
+  say "The main account runs everything except SMS: website, API, Lambda, storage."
+  say "Use an IAM user with admin rights, not the root user."
+  open_url "https://console.aws.amazon.com/iam/home#/security_credentials"
+  step "IAM -> Users -> your user -> Security credentials -> Create access key (CLI)."
+  step "Copy the Access key ID and the Secret access key."
+  ask MAIN_KEY_ID "Main account Access key ID:"
+  ask_secret MAIN_SECRET "Main account Secret access key (hidden):"
+  ask MAIN_REGION "Main region [ap-south-1]:"
+  MAIN_REGION="${MAIN_REGION:-ap-south-1}"
+  [[ -n "$MAIN_KEY_ID" && -n "$MAIN_SECRET" ]] || { warn "both values are required"; exit 1; }
+  configure_profile main "$MAIN_KEY_ID" "$MAIN_SECRET" "$MAIN_REGION"
+  unset MAIN_SECRET
+  MAIN_ARN="$(whoami_arn main)" || { warn "these keys do not authenticate; check them and re-run"; exit 1; }
+  write_env MAIN_KEY_ID "$MAIN_KEY_ID"
+  REUSED_MAIN=false
+fi
 MAIN_ID="$(aws sts get-caller-identity --profile main --query Account --output text)"
 printf '  %s✓ main account %s%s (%s)\n' "$GREEN" "$MAIN_ID" "$RESET" "$MAIN_ARN"
 if [[ "$MAIN_ARN" == *":root" ]]; then
   warn "These are ROOT keys. Create an IAM user instead if you can."
   confirm "Continue with root keys anyway?" || exit 1
 fi
-write_env MAIN_KEY_ID "$MAIN_KEY_ID"
 write_env MAIN_REGION "$MAIN_REGION"
-pause
+[[ "$REUSED_MAIN" == true ]] || pause
 
 # ── 2 ─────────────────────────────────────────────────────────────────────
 stage "SMS account: access key"
-say "The SMS account only holds the SNS topic (us-east-1, where your phones are verified)."
-say "Best: an IAM user there with only SNS permissions (sns:* and sts:GetCallerIdentity)."
-open_url "https://console.aws.amazon.com/iam/home#/security_credentials"
-step "Sign in to the SMS account, create an access key for that user, copy both values."
-ask SMS_KEY_ID "SMS account Access key ID:"
-ask_secret SMS_SECRET "SMS account Secret access key (hidden):"
-[[ -n "$SMS_KEY_ID" && -n "$SMS_SECRET" ]] || { warn "both values are required"; exit 1; }
-configure_profile sms "$SMS_KEY_ID" "$SMS_SECRET" "us-east-1"
-unset SMS_SECRET
-SMS_ARN="$(whoami_arn sms)" || { warn "these keys do not authenticate; check them and re-run"; exit 1; }
+if [[ "$NEW_KEYS" == false ]] && SMS_ARN="$(whoami_arn sms)"; then
+  say "Using the saved 'sms' profile from ~/.aws/credentials (run ./setup.sh --new-keys to replace it)."
+  REUSED_SMS=true
+else
+  say "The SMS account only holds the SNS topic (us-east-1, where your phones are verified)."
+  say "Best: an IAM user there with only SNS permissions (sns:* and sts:GetCallerIdentity)."
+  open_url "https://console.aws.amazon.com/iam/home#/security_credentials"
+  step "Sign in to the SMS account, create an access key for that user, copy both values."
+  ask SMS_KEY_ID "SMS account Access key ID:"
+  ask_secret SMS_SECRET "SMS account Secret access key (hidden):"
+  [[ -n "$SMS_KEY_ID" && -n "$SMS_SECRET" ]] || { warn "both values are required"; exit 1; }
+  configure_profile sms "$SMS_KEY_ID" "$SMS_SECRET" "us-east-1"
+  unset SMS_SECRET
+  SMS_ARN="$(whoami_arn sms)" || { warn "these keys do not authenticate; check them and re-run"; exit 1; }
+  write_env SMS_KEY_ID "$SMS_KEY_ID"
+  REUSED_SMS=false
+fi
 SMS_ID="$(aws sts get-caller-identity --profile sms --query Account --output text)"
 printf '  %s✓ SMS account %s%s (%s)\n' "$GREEN" "$SMS_ID" "$RESET" "$SMS_ARN"
 [[ "$SMS_ID" != "$MAIN_ID" ]] || { warn "Both keys belong to account $MAIN_ID. The SMS keys must be from the other account."; exit 1; }
 [[ "$SMS_ARN" == *":root" ]] && warn "ROOT keys for the SMS account. An SNS-only IAM user is safer."
-write_env SMS_KEY_ID "$SMS_KEY_ID"
-pause
+[[ "$REUSED_SMS" == true ]] || pause
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
 stage "Phone numbers"
