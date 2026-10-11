@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+
+const BASE = import.meta.env.VITE_API_BASE ?? ''
 import { LEVEL_STYLE, clockLabel } from '../utils/format'
 import { postAlert } from '../utils/api'
 
 const STATUS = {
   simulated: { text: 'Simulated delivery', bg: '#232a33', fg: '#aeb6c0' },
-  sent: { text: 'Sent via SNS', bg: '#13301f', fg: '#7fdb9a' },
+  sent: { text: 'Accepted by SNS', bg: '#13301f', fg: '#7fdb9a' },
   pending_approval: { text: 'Awaiting approval', bg: '#3a3010', fg: '#f5d06b' },
   rejected: { text: 'Rejected', bg: '#232a33', fg: '#aeb6c0' },
   failed: { text: 'Delivery failed', bg: '#45161a', fg: '#ff8a80' },
@@ -25,11 +27,55 @@ function Phone({ alert }) {
   )
 }
 
-export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey, error }) {
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }) : '')
+
+/** Real-delivery controls for the drill: mode, latch, Send test, Re-arm. */
+function DrillPanel({ system, opKey, onOpKey, reloadSystem, autopilot }) {
+  const [busy, setBusy] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const sns = system?.sns
+  const live = sns?.mode === 'live'
+  const latch = system?.demo_sms
+  const call = async (path, label) => {
+    setBusy(label); setMsg(null)
+    try {
+      const r = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'X-API-Key': opKey } })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.detail ?? `HTTP ${r.status}`)
+      setMsg(label === 'test' ? { ok: true, text: `Test accepted by SNS: ${body.message_id} at ${fmtTime(body.accepted_at)}` } : { ok: true, text: 'Drill re-armed: the next approved EVACUATE sends one real SMS.' })
+      reloadSystem?.()
+    } catch (e) { setMsg({ ok: false, text: e.message }) } finally { setBusy(null) }
+  }
+  return (
+    <div className="rounded-lg border border-white/[.07] p-3 mb-4 text-[12px] space-y-2">
+      <div className={live ? 'text-[#7fdb9a] font-medium' : 'text-muted'}>{sns ? sns.label : 'Checking alert mode...'}</div>
+      {live && latch && (
+        <div className="text-muted">
+          {latch.armed ? 'Drill armed: the next approved EVACUATE sends one real SMS and email.'
+            : `Drill sent ${fmtTime(latch.sent_at)}${latch.message_id ? `, accepted by SNS as ${latch.message_id}` : ''}. Re-arm to send again.`}
+        </div>
+      )}
+      {live && autopilot && <div className="text-[#f5d06b]">Real SMS needs operator approval: untick auto-approve before starting.</div>}
+      <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key"
+        aria-label="Operator key" className="field w-full" autoComplete="off" />
+      <div className="flex gap-2">
+        <button className="btn flex-1" disabled={!opKey || !live || busy} onClick={() => call('/api/notify/test', 'test')}>{busy === 'test' ? 'Sending...' : 'Send test'}</button>
+        <button className="btn flex-1" disabled={!opKey || busy} onClick={() => call('/api/demo-sms/rearm', 'rearm')}>{busy === 'rearm' ? 'Re-arming...' : 'Re-arm drill'}</button>
+      </div>
+      {msg && <p className={msg.ok ? 'text-[#7fdb9a]' : 'text-[#ff8a80]'}>{msg.text}</p>}
+    </div>
+  )
+}
+
+export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey, error, system, reloadSystem, autopilot }) {
   const latestPublic = [...alerts].reverse().find((a) => a.audience === 'public' && a.status !== 'pending_approval' && a.status !== 'rejected')
   const list = [...alerts].reverse()
+  const sentCount = alerts.filter((a) => a.status === 'sent').length
+  useEffect(() => { if (sentCount) reloadSystem?.() }, [sentCount, reloadSystem])  // latch state changed on the server
   return (
     <aside className="panel absolute z-10 right-3 top-[72px] bottom-3 w-[330px] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-4 max-[1100px]:hidden">
+      <div className="panel-title mb-2">Real alerts</div>
+      <DrillPanel system={system} opKey={opKey} onOpKey={onOpKey} reloadSystem={reloadSystem} autopilot={autopilot} />
       <div className="panel-title mb-2">Public alert, as received</div>
       <Phone alert={latestPublic} />
 
@@ -37,10 +83,6 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
         <div className="panel-title">Alert log</div>
         <div className="text-muted text-[11px]">{alerts.length} sent or queued</div>
       </div>
-      {alerts.some((a) => a.status === 'pending_approval') && (
-        <input type="password" value={opKey} onChange={(e) => onOpKey(e.target.value)} placeholder="Operator key to approve"
-          className="field w-full mb-2" autoComplete="off" />
-      )}
       {error && <p className="text-[#ff8a80] mb-2">{error}</p>}
       <ol className="space-y-2">
         {list.map((a) => {
@@ -63,6 +105,12 @@ export default function AlertFeed({ alerts, onApprove, onReject, opKey, onOpKey,
                   </span>
                 )}
               </div>
+              {a.status === 'sent' && a.message_ids?.[0] && (
+                <p className="mt-1.5 text-[11px] text-[#7fdb9a]">
+                  {a.channel}: MessageId <span className="num">{a.message_ids[0]}</span>, accepted by SNS {fmtTime(a.accepted_at)}
+                </p>
+              )}
+              {a.note && <p className="mt-1.5 text-[11px] text-muted">{a.note}</p>}
             </li>
           )
         })}
