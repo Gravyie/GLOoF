@@ -433,6 +433,54 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# ============================================================== HTTPS front door (no CloudFront)
+# Browsers such as Brave try https:// first, and the ALB has no certificate (that needs a
+# domain), so the bare ALB URL times out for them. An API Gateway HTTP API gives an
+# AWS-owned HTTPS URL with no domain and no account verification, and proxies every
+# request (site and /api) to the ALB unchanged.
+resource "aws_apigatewayv2_api" "site" {
+  count         = var.enable_cloudfront ? 0 : 1
+  name          = "${var.name}-site"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_integration" "root" {
+  count              = var.enable_cloudfront ? 0 : 1
+  api_id             = aws_apigatewayv2_api.site[0].id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = "http://${aws_lb.api.dns_name}/"
+}
+
+resource "aws_apigatewayv2_integration" "proxy" {
+  count              = var.enable_cloudfront ? 0 : 1
+  api_id             = aws_apigatewayv2_api.site[0].id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = "http://${aws_lb.api.dns_name}/{proxy}"
+}
+
+resource "aws_apigatewayv2_route" "root" {
+  count     = var.enable_cloudfront ? 0 : 1
+  api_id    = aws_apigatewayv2_api.site[0].id
+  route_key = "ANY /"
+  target    = "integrations/${aws_apigatewayv2_integration.root[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "proxy" {
+  count     = var.enable_cloudfront ? 0 : 1
+  api_id    = aws_apigatewayv2_api.site[0].id
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.proxy[0].id}"
+}
+
+resource "aws_apigatewayv2_stage" "site" {
+  count       = var.enable_cloudfront ? 0 : 1
+  api_id      = aws_apigatewayv2_api.site[0].id
+  name        = "$default"
+  auto_deploy = true
+}
+
 resource "aws_ecs_cluster" "this" {
   name = var.name
 }

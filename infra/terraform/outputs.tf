@@ -11,3 +11,4 @@ output "ecs_service" { value = module.main.ecs_service }
 output "api_key_secret" { value = module.main.api_key_secret }
 output "sms_account_id" { value = module.sms.sms_account_id }
 output "ses_sender" { value = var.ses_sender }
+output "alb_url" { value = module.main.alb_url }

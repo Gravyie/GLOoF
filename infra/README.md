@@ -149,8 +149,12 @@ CloudFront resources"*. That is an account check by AWS, not a problem in the st
 1. **Deploy without CloudFront now.** Set `enable_cloudfront = false` in `terraform/terraform.tfvars`, or answer No in
    `setup.sh`, and re-run `./deploy.sh`.
    - The frontend is bundled into the API image and served by the same task through the load balancer.
-   - The site URL becomes `http://<alb-dns>`. It is HTTP only; with no domain there is no certificate.
-   - The load balancer then accepts HTTP from anywhere instead of only from CloudFront.
+   - The site URL becomes `https://<id>.execute-api.<region>.amazonaws.com`: an API Gateway HTTP API in front of the
+     load balancer. It gives an AWS-owned HTTPS address without a domain or account verification.
+   - This matters because browsers such as Brave (and Chrome with "Always use secure connections") try `https://`
+     first. The bare load balancer has no certificate, so its URL times out for them.
+   - The load balancer's own `http://<alb-dns>` address (output `alb_url`) still works as a fallback.
+   - Limits: API Gateway caps a request at 30 s and 10 MB. The largest response (`/api/archive/ice`) is about 2 MB.
 2. **Open an AWS Support case** (Account and billing, account verification for CloudFront) quoting the error. Once
    verified, set `enable_cloudfront = true` and re-run `./deploy.sh` to get CloudFront and HTTPS.
 

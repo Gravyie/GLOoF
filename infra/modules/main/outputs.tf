@@ -7,8 +7,9 @@ output "ecr_ingest" { value = aws_ecr_repository.ingest.repository_url }
 output "ecr_api" { value = aws_ecr_repository.api.repository_url }
 output "distribution_id" { value = var.enable_cloudfront ? aws_cloudfront_distribution.site[0].id : "" }
 output "site_url" {
-  value = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.site[0].domain_name}" : "http://${aws_lb.api.dns_name}"
+  value = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.site[0].domain_name}" : aws_apigatewayv2_api.site[0].api_endpoint
 }
+output "alb_url" { value = "http://${aws_lb.api.dns_name}" }
 output "ingest_function" { value = aws_lambda_function.ingest.function_name }
 output "ecs_cluster" { value = aws_ecs_cluster.this.name }
 output "ecs_service" { value = aws_ecs_service.api.name }

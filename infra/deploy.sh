@@ -100,8 +100,14 @@ echo
 if [ "$CLOUDFRONT" = "true" ]; then
   echo "Site:        $($tf output -raw site_url)   (first CloudFront deploy can take ~10 min)"
 else
-  echo "Site:        $($tf output -raw site_url)   (HTTP via the load balancer; the new task takes ~2 min to become healthy)"
+  echo "Site:        $($tf output -raw site_url)   (HTTPS via API Gateway; fallback $($tf output -raw alb_url))"
 fi
+SITE="$($tf output -raw site_url)"
+printf "Waiting for the site to answer"
+for _ in $(seq 1 36); do
+  if curl -fsS -m 5 "$SITE/api/health" >/dev/null 2>&1; then printf "\nLive at %s\n" "$SITE"; break; fi
+  printf "."; sleep 5
+done
 echo "Alert topic: $($tf output -raw alert_topic_arn)"
 echo "Operator key: aws secretsmanager get-secret-value --secret-id $($tf output -raw api_key_secret) --query SecretString --output text --profile $MAIN_PROFILE --region $MAIN_REGION"
 echo
