@@ -293,6 +293,12 @@ warn "While on, anyone pressing Play on the public site can trigger it (5-minute
 if confirm "Turn the real SMS drill ON for this deploy?"; then DRILL=true; else DRILL=false; fi
 write_env DRILL "$DRILL"
 [[ "$DRILL" == true ]] && DRY=false || DRY=true
+say ""
+say "CloudFront gives the site HTTPS, but brand-new AWS accounts are often blocked from"
+say "creating it until AWS Support verifies the account."
+if confirm "Has AWS verified this account for CloudFront? (No = serve over HTTP from the load balancer)"; then
+  CDN=true; else CDN=false; fi
+write_env CDN "$CDN"
 hcl_list() { local out="" x; for x in $1; do out+="\"$x\", "; done; printf '[%s]' "${out%, }"; }
 cat > "$TFVARS" <<HCL
 # Written by infra/setup.sh (gitignored). Re-run setup.sh to change.
@@ -307,6 +313,7 @@ sms_spend_limit          = $SPEND
 alert_dry_run            = $DRY
 sim_live_sms             = $DRILL
 demo_sms_live            = $DRILL
+enable_cloudfront        = $CDN
 HCL
 printf '  %s✓ wrote%s terraform/terraform.tfvars\n' "$GREEN" "$RESET"
 pause

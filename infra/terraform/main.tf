@@ -42,6 +42,7 @@ module "main" {
   alert_dry_run      = var.alert_dry_run
   sim_live_sms       = var.sim_live_sms
   demo_sms_live      = var.demo_sms_live
+  enable_cloudfront  = var.enable_cloudfront
 }
 
 module "sms" {

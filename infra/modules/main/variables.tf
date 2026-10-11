@@ -45,3 +45,9 @@ variable "demo_sms_live" {
   type    = bool
   default = false
 }
+
+variable "enable_cloudfront" {
+  description = "Serve through CloudFront (HTTPS). False: the API task serves the site via the ALB over HTTP (for accounts not yet verified for CloudFront)."
+  type        = bool
+  default     = true
+}

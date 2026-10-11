@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -64,6 +65,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     load_archives(app)
 
     app.include_router(router)
+
+    # Serve the built frontend from the same origin when it is bundled into the image
+    # (deployments without CloudFront). /api/* routes are registered first, so they win.
+    static = Path(__file__).resolve().parents[1] / "static"
+    if (static / "index.html").exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/", StaticFiles(directory=static, html=True), name="site")
     return app
 
 

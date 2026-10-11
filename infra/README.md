@@ -137,6 +137,19 @@ Docker must be running.
 
 **Destroy:** `./destroy.sh` (asks you to type `destroy glof`).
 
+## If CloudFront is blocked (new accounts)
+
+A brand-new AWS account can fail at the CloudFront step with *"Your account must be verified before you can add new
+CloudFront resources"*. That is an account check by AWS, not a problem in the stack. Two things to do:
+
+1. **Deploy without CloudFront now.** Set `enable_cloudfront = false` in `terraform/terraform.tfvars`, or answer No in
+   `setup.sh`, and re-run `./deploy.sh`.
+   - The frontend is bundled into the API image and served by the same task through the load balancer.
+   - The site URL becomes `http://<alb-dns>`. It is HTTP only; with no domain there is no certificate.
+   - The load balancer then accepts HTTP from anywhere instead of only from CloudFront.
+2. **Open an AWS Support case** (Account and billing, account verification for CloudFront) quoting the error. Once
+   verified, set `enable_cloudfront = true` and re-run `./deploy.sh` to get CloudFront and HTTPS.
+
 ## Manual steps Terraform cannot do
 
 - **Verify the sandbox phone numbers** in the SNS console of the SMS account, region us-east-1 (Text messaging (SMS),

@@ -37,13 +37,18 @@ variable "demo_sms_live" {
   type    = bool
   default = false
 }
+variable "enable_cloudfront" {
+  type    = bool
+  default = true
+}
 
 module "main" {
-  source          = "../modules/main"
-  alert_topic_arn = var.alert_topic_arn
-  alert_dry_run   = var.alert_dry_run
-  sim_live_sms    = var.sim_live_sms
-  demo_sms_live   = var.demo_sms_live
+  source            = "../modules/main"
+  alert_topic_arn   = var.alert_topic_arn
+  alert_dry_run     = var.alert_dry_run
+  sim_live_sms      = var.sim_live_sms
+  demo_sms_live     = var.demo_sms_live
+  enable_cloudfront = var.enable_cloudfront
 }
 
 output "site_url" { value = module.main.site_url }

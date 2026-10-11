@@ -83,3 +83,9 @@ variable "demo_sms_live" {
   type    = bool
   default = false
 }
+
+variable "enable_cloudfront" {
+  description = "False for accounts AWS has not yet verified for CloudFront: the site is then served over HTTP from the ALB."
+  type        = bool
+  default     = true
+}

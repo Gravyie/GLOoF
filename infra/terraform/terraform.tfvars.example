@@ -14,3 +14,7 @@ sms_spend_limit  = 1
 alert_dry_run = true
 sim_live_sms  = false
 demo_sms_live = false
+
+# New accounts may need AWS Support to verify them before CloudFront works.
+# false = serve the site from the ALB over HTTP until then.
+enable_cloudfront = true

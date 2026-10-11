@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
 COPY archive ./archive
 COPY reference ./reference
+# Built frontend (deploy.sh copies frontend/dist here). Served by the API when
+# CloudFront is not used; empty otherwise.
+COPY static ./static
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000

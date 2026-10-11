@@ -331,15 +331,18 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
   name = "com.amazonaws.global.cloudfront.origin-facing"
 }
 
+# With CloudFront: HTTP from CloudFront's origin-facing ranges only.
+# Without CloudFront (enable_cloudfront = false): the ALB is the public entry point.
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
-  description = "HTTP from CloudFront only"
+  description = var.enable_cloudfront ? "HTTP from CloudFront only" : "Public HTTP (no CloudFront)"
   vpc_id      = aws_vpc.this.id
   ingress {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
-    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
+    prefix_list_ids = var.enable_cloudfront ? [data.aws_ec2_managed_prefix_list.cloudfront.id] : null
+    cidr_blocks     = var.enable_cloudfront ? null : ["0.0.0.0/0"]
   }
   egress {
     from_port   = 0
@@ -490,6 +493,7 @@ resource "aws_s3_bucket_public_access_block" "site" {
 }
 
 resource "aws_cloudfront_origin_access_control" "site" {
+  count                             = var.enable_cloudfront ? 1 : 0
   name                              = "${var.name}-site"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
@@ -500,7 +504,11 @@ data "aws_cloudfront_cache_policy" "optimized" { name = "Managed-CachingOptimize
 data "aws_cloudfront_cache_policy" "disabled" { name = "Managed-CachingDisabled" }
 data "aws_cloudfront_origin_request_policy" "all_but_host" { name = "Managed-AllViewerExceptHostHeader" }
 
+# New AWS accounts may be blocked from creating CloudFront distributions until AWS
+# Support verifies them. Set enable_cloudfront = false to serve the site from the
+# API task through the ALB instead (HTTP only), and flip it back once verified.
 resource "aws_cloudfront_distribution" "site" {
+  count               = var.enable_cloudfront ? 1 : 0
   enabled             = true
   default_root_object = "index.html"
   price_class         = "PriceClass_200" # includes India edge locations
@@ -509,7 +517,7 @@ resource "aws_cloudfront_distribution" "site" {
   origin {
     origin_id                = "site"
     domain_name              = aws_s3_bucket.site.bucket_regional_domain_name
-    origin_access_control_id = aws_cloudfront_origin_access_control.site.id
+    origin_access_control_id = aws_cloudfront_origin_access_control.site[0].id
   }
 
   origin {
@@ -564,6 +572,7 @@ resource "aws_cloudfront_distribution" "site" {
 }
 
 resource "aws_s3_bucket_policy" "site" {
+  count  = var.enable_cloudfront ? 1 : 0
   bucket = aws_s3_bucket.site.id
   policy = jsonencode({
     Version = "2012-10-17"
@@ -573,7 +582,7 @@ resource "aws_s3_bucket_policy" "site" {
       Principal = { Service = "cloudfront.amazonaws.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.site.arn}/*"
-      Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.site.arn } }
+      Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.site[0].arn } }
     }]
   })
 }

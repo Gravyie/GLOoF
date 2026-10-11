@@ -23,6 +23,7 @@ ARCH="$(v var.arch)"
 EXP_MAIN="$(v var.expected_main_account_id)"
 EXP_SMS="$(v var.expected_sms_account_id)"
 NUMBERS="$(v 'join(" ", nonsensitive(var.demo_sms_numbers))')"
+CLOUDFRONT="$(v var.enable_cloudfront)"
 
 # ---------------------------------------------------------------- preflight
 echo "== preflight"
@@ -49,6 +50,11 @@ ECR_API="$($tf output -raw ecr_api)"
 aws ecr get-login-password --region "$MAIN_REGION" --profile "$MAIN_PROFILE" \
   | docker login --username AWS --password-stdin "${ECR_INGEST%%/*}" >/dev/null
 
+echo "== frontend build (bundled into the API image; also uploaded to S3 when CloudFront is on)"
+(cd "$here/../frontend" && npm ci --silent && VITE_API_BASE="" npm run build)
+find "$here/../backend/static" -mindepth 1 ! -name .gitkeep -delete
+cp -R "$here/../frontend/dist/." "$here/../backend/static/"
+
 echo "== 1. Lambda image"
 docker build --platform "linux/$ARCH" --provenance=false -f "$here/../backend/Dockerfile.lambda" -t "$ECR_INGEST:latest" "$here/../backend"
 docker push "$ECR_INGEST:latest"
@@ -69,12 +75,14 @@ aws ecs update-service --cluster "$($tf output -raw ecs_cluster)" --service "$($
   --force-new-deployment --region "$MAIN_REGION" --profile "$MAIN_PROFILE" >/dev/null
 
 # ---------------------------------------------------------------- 4-6. frontend
-echo "== 4. frontend build"
-(cd "$here/../frontend" && npm ci --silent && VITE_API_BASE="" npm run build)
-echo "== 5. upload"
-aws s3 sync "$here/../frontend/dist" "s3://$SITE_BUCKET" --delete --profile "$MAIN_PROFILE" --region "$MAIN_REGION"
-echo "== 6. invalidate CDN"
-aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*' --profile "$MAIN_PROFILE" >/dev/null
+if [ "$CLOUDFRONT" = "true" ]; then
+  echo "== 4-5. upload site to S3"
+  aws s3 sync "$here/../frontend/dist" "s3://$SITE_BUCKET" --delete --profile "$MAIN_PROFILE" --region "$MAIN_REGION"
+  echo "== 6. invalidate CDN"
+  aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*' --profile "$MAIN_PROFILE" >/dev/null
+else
+  echo "== 4-6. CloudFront off: the API task serves the site through the ALB (HTTP)"
+fi
 
 # ---------------------------------------------------------------- 7. archive seed
 echo "== 7. seed archive"
@@ -84,7 +92,11 @@ done
 
 # ---------------------------------------------------------------- 8. summary
 echo
-echo "Site:        $($tf output -raw site_url)   (first CloudFront deploy can take ~10 min)"
+if [ "$CLOUDFRONT" = "true" ]; then
+  echo "Site:        $($tf output -raw site_url)   (first CloudFront deploy can take ~10 min)"
+else
+  echo "Site:        $($tf output -raw site_url)   (HTTP via the load balancer; the new task takes ~2 min to become healthy)"
+fi
 echo "Alert topic: $($tf output -raw alert_topic_arn)"
 echo "Operator key: aws secretsmanager get-secret-value --secret-id $($tf output -raw api_key_secret) --query SecretString --output text --profile $MAIN_PROFILE --region $MAIN_REGION"
 echo
